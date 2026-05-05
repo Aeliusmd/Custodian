@@ -1,0 +1,356 @@
+.uploadMain {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  min-height: 100%;
+}
+
+.uploadFrame {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 16px;
+  width: 100%;
+}
+
+.uploadHeaderWrap {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  padding: 0 0 24px;
+  width: 100%;
+}
+
+.uploadHeaderRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.backButton {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  color: #9ca3af;
+  background: #ffffff;
+}
+
+.backButton:hover {
+  background: #f9fafb;
+  color: #4b5563;
+}
+
+.uploadTitle {
+  font-family: 'Outfit', sans-serif;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 28px;
+  color: #1a2340;
+}
+
+.uploadSubtitle {
+  font-family: 'Inter', sans-serif;
+  font-style: normal;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 16px;
+  color: #9ca3af;
+  margin-top: 2px;
+}
+
+@media (max-width: 639px) {
+  .uploadHeaderRow {
+    align-items: flex-start;
+  }
+
+  .uploadTitle {
+    font-size: 18px;
+    line-height: 24px;
+  }
+
+  .uploadSubtitle {
+    line-height: 15px;
+  }
+}
+
+.uploadPanel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 20px;
+  width: 100%;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+}
+
+.uploadPanelInner {
+  width: 100%;
+  max-width: 672px;
+  margin: 0 auto;
+}
+
+.uploadStepper {
+  padding: 0 0 32px;
+}
+
+.categoryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.categoryCard {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 74px;
+  padding: 18px;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+@media (min-width: 640px) {
+  .uploadFrame {
+    padding: 24px;
+  }
+
+  .uploadPanel {
+    padding: 33px;
+  }
+}
+
+.categoryCardSelected {
+  border-color: #0097b2;
+  background: rgba(0, 151, 178, 0.05);
+}
+
+.stepCircleBase {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  transition: all 0.2s;
+}
+
+.stepCircleDone,
+.stepCircleActive {
+  background-color: #0097B2;
+  color: #ffffff;
+}
+
+.stepCirclePending {
+  background-color: #e5e7eb;
+  color: #9ca3af;
+}
+
+.stepLabelActive {
+  color: #1a2340;
+}
+
+.stepLabelPending {
+  color: #9ca3af;
+}
+
+.stepConnectorDone {
+  background-color: #0097B2;
+}
+
+.stepConnectorPending {
+  background-color: #e5e7eb;
+}
+
+.panelIconBgTeal {
+  background-color: rgba(0, 151, 178, 0.08);
+}
+
+.panelIconBgOrange {
+  background-color: rgba(217, 119, 6, 0.15);
+}
+
+.panelIconTeal {
+  color: #0097B2;
+}
+
+.panelIconOrange {
+  color: #16A34A;
+}
+
+.stepCheckBgTeal {
+  background-color: rgba(0, 151, 178, 0.12);
+}
+
+.stepCheckBgOrange {
+  background-color: #16A34A18;
+}
+
+.stepCheckTeal {
+  color: #0097B2;
+}
+
+.stepCheckOrange {
+  color: #16A34A;
+}
+
+.accentTealText {
+  color: #0097B2;
+}
+
+.accentOrangeText {
+  color: #16A34A;
+}
+
+.tipIconBg {
+  background-color: rgba(0, 151, 178, 0.08);
+}
+
+.tipIcon {
+  color: #0097B2;
+}
+
+.fileDropBgActive {
+  border-color: #0097B2;
+  background-color: rgba(0, 151, 178, 0.05);
+}
+
+.fileDropBgIdle {
+  border-color: #e5e7eb;
+  background-color: #ffffff;
+}
+
+.filePreviewIconBg {
+  background-color: rgba(0, 151, 178, 0.08);
+}
+
+.filePreviewIcon {
+  color: #0097B2;
+}
+
+.filePreviewRemove {
+  color: #d1d5db;
+}
+
+.filePreviewRemove:hover {
+  color: #f87171;
+  background-color: #fef2f2;
+}
+
+.templateStatusErrorBg {
+  background-color: #fee2e2;
+}
+
+.templateStatusOkBg {
+  background-color: #dcfce7;
+}
+
+.templateStatusErrorIcon {
+  color: #ef4444;
+}
+
+.templateStatusOkIcon {
+  color: #16a34a;
+}
+
+.templateStatusOkText {
+  color: #16a34a;
+}
+
+.privacyIconBgActive {
+  background-color: rgba(0, 151, 178, 0.12);
+}
+
+.privacyIconBgInactive {
+  background-color: #f3f4f6;
+}
+
+.privacyIconActive {
+  color: #0097B2;
+}
+
+.privacyIconInactive {
+  color: #9ca3af;
+}
+
+.privacyCheckBg {
+  background-color: #0097B2;
+}
+
+.successIconBg {
+  background-color: rgba(0, 151, 178, 0.08);
+}
+
+.successIcon {
+  color: #0097B2;
+}
+
+.primaryButton {
+  background-color: #0097B2;
+}
+
+.primaryButton:hover {
+  background-color: #007d95;
+}
+
+.primaryButtonOrange {
+  background-color: #d97706;
+}
+
+.primaryButtonOrange:hover {
+  background-color: #b86505;
+}
+
+.cardAccentTealBg {
+  background-color: rgba(0, 151, 178, 0.08);
+}
+
+.cardAccentOrangeBg {
+  background-color: rgba(22, 163, 74, 0.12);
+}
+
+.cardAccentTealText {
+  color: #0097B2;
+}
+
+.cardAccentOrangeText {
+  color: #16a34a;
+}
+
+.backLinkButton {
+  color: #4b5563;
+}
+
+.backLinkButton:hover {
+  background-color: #f9fafb;
+}
+
+.iconOnlyButton {
+  color: #d1d5db;
+}
+
+.iconOnlyButton:hover {
+  color: #f87171;
+  background-color: #fef2f2;
+}
+
+.textMuted {
+  color: #9ca3af;
+}
+
+.textBody {
+  color: #1a2340;
+}

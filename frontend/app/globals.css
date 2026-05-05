@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4f9fc;
+  --foreground: #0f172a;
+  --brand-bg: #f4f9fc;
+  --brand-surface: #f8fbff;
+  --brand-border: #dbe7f3;
+  --brand-navy: #0f172a;
+  --brand-body: #334155;
+  --brand-muted: #64748b;
+  --brand-cyan: #0097b2;
+  --brand-cyan-dark: #007c93;
+  --brand-cyan-light: #dff6fb;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-brand-bg: var(--brand-bg);
+  --color-brand-surface: var(--brand-surface);
+  --color-brand-border: var(--brand-border);
+  --color-brand-navy: var(--brand-navy);
+  --color-brand-body: var(--brand-body);
+  --color-brand-muted: var(--brand-muted);
+  --color-brand-cyan: var(--brand-cyan);
+  --color-brand-cyan-dark: var(--brand-cyan-dark);
+  --color-brand-cyan-light: var(--brand-cyan-light);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), "Segoe UI", Tahoma, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f4f9fc;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c9dcf0;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #0097b2;
+}
+
+::selection {
+  background: rgba(0, 151, 178, 0.15);
+  color: #0f172a;
+}
