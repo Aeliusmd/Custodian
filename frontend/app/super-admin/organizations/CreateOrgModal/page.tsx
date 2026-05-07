@@ -17,9 +17,7 @@ type AdminEntry = {
 };
 
 const industries = ['Legal Services', 'Finance', 'Healthcare', 'Insurance', 'Real Estate', 'Technology', 'Consulting', 'Education', 'Other'];
-const planTypes = ['Manual', 'Subscription'] as const;
 const manualPlans = ['3 Month Plan', '6 Month Plan', '1 Year Plan'];
-const subPlans = ['Starter', 'Professional', 'Enterprise'];
 
 const emptyAdmin = (): AdminEntry => ({
   id: `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -30,16 +28,15 @@ const emptyAdmin = (): AdminEntry => ({
 export default function CreateOrgModal({ org, onClose, onSave }: CreateOrgModalProps) {
   const isEdit = !!org;
   const [form, setForm] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    address: '',
-    industry: 'Legal Services',
-    planType: 'Subscription' as 'Manual' | 'Subscription',
-    planName: 'Professional',
-    planExpiry: '',
-    status: 'Active' as 'Active' | 'Inactive',
-  });
+  name: '',
+  email: '',
+  phone: '',
+  address: '',
+  industry: 'Legal Services',
+  planName: manualPlans[0],
+  planExpiry: '',
+  status: 'Active' as 'Active' | 'Inactive',
+});
   const [admins, setAdmins] = useState<AdminEntry[]>([emptyAdmin()]);
   const [adminError, setAdminError] = useState('');
 
@@ -49,16 +46,15 @@ export default function CreateOrgModal({ org, onClose, onSave }: CreateOrgModalP
     }
 
     setForm({
-      name: org.name,
-      email: org.email,
-      phone: org.phone,
-      address: org.address,
-      industry: org.industry,
-      planType: org.planType,
-      planName: org.planName,
-      planExpiry: org.planExpiry,
-      status: org.status,
-    });
+  name: org.name,
+  email: org.email,
+  phone: org.phone,
+  address: org.address,
+  industry: org.industry,
+  planName: org.planName,
+  planExpiry: org.planExpiry,
+  status: org.status,
+});
 
     if (org.admins.length > 0) {
       setAdmins(org.admins.map((admin) => ({ id: admin.id, name: admin.name, email: admin.email })));
@@ -117,8 +113,7 @@ export default function CreateOrgModal({ org, onClose, onSave }: CreateOrgModalP
     onSave(nextOrg);
   };
 
-  const planOptions = form.planType === 'Manual' ? manualPlans : subPlans;
-
+const planOptions = manualPlans;
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
@@ -172,24 +167,7 @@ export default function CreateOrgModal({ org, onClose, onSave }: CreateOrgModalP
           <div className="border-t border-brand-border pt-5">
             <h3 className="text-[11px] font-semibold text-brand-muted uppercase tracking-widest mb-3">Plan Assignment</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-brand-muted mb-1.5">Plan Type</label>
-                <div className="flex gap-2">
-                  {planTypes.map((planType) => (
-                    <button
-                      key={planType}
-                      type="button"
-                      onClick={() => {
-                        handleChange('planType', planType);
-                        handleChange('planName', planType === 'Manual' ? manualPlans[0] : subPlans[0]);
-                      }}
-                      className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all whitespace-nowrap ${form.planType === planType ? 'bg-[#0097B2] text-white border-[#0097B2]' : 'border-brand-border text-brand-muted hover:text-brand-navy'}`}
-                    >
-                      {planType}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              
               <div>
                 <label className="block text-xs font-medium text-brand-muted mb-1.5">Plan Name</label>
                 <select title="Plan name" value={form.planName} onChange={(e) => handleChange('planName', e.target.value)} className="w-full px-3 py-2 border border-brand-border rounded-lg text-sm text-brand-body focus:outline-none focus:border-[#0097B2] transition-colors bg-white">

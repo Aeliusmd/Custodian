@@ -256,14 +256,6 @@ export default function ShareDocumentModal({ docs, onClose }: Props) {
                   </div>
                 ))}
               </div>
-
-              <button
-                onClick={() => setStage('otp')}
-                className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer flex items-center justify-center gap-2"
-              >
-                <i className="ri-eye-line" />
-                Preview Receiver&apos;s OTP Screen
-              </button>
             </div>
           )}
 

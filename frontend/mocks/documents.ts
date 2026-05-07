@@ -23,6 +23,7 @@ export interface DocumentRecord {
   contentSnippet?: string;
   archivedBy?: string;
   archivedDate?: string;
+
 }
 
 export const MOCK_CATEGORIES = [

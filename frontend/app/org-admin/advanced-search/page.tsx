@@ -119,6 +119,32 @@ export default function AdvancedSearchPage() {
             Search Filters
           </h3>
 
+          {/* Keyword search — full width, prominent */}
+          <div className="mb-4">
+            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+              Keyword Search
+              <span className="ml-2 normal-case font-normal text-gray-300">(searches document name, content, metadata)</span>
+            </label>
+            <div className="relative">
+              <i className="ri-search-line absolute left-4 top-1/2 -translate-y-1/2 text-gray-300 text-base" />
+              <input
+                value={filters.keyword}
+                onChange={(e) => setFilters((prev) => ({ ...prev, keyword: e.target.value }))}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                placeholder="Search inside documents, filenames, metadata..."
+                className="w-full border border-gray-200 rounded-xl pl-10 pr-4 py-2.5 text-sm text-[#1a2340] outline-none focus:border-[#0097B2] transition-all"
+              />
+              {filters.keyword && (
+                <button
+                  onClick={() => setFilters((prev) => ({ ...prev, keyword: '' }))}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 cursor-pointer"
+                >
+                  <i className="ri-close-line" />
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             {/* Document Name */}
             <div>
@@ -231,6 +257,8 @@ export default function AdvancedSearchPage() {
           </div>
         </div>
       )}
+
+      
 
       {/* Results */}
       {searched && results !== null && (
