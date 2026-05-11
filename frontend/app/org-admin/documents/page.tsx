@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { MOCK_DOCUMENTS, MOCK_UPLOADERS, MOCK_CATEGORIES, type DocumentRecord } from '../../../mocks/documents';
+import { type DocumentRecord } from '../../../mocks/documents';
 import EditMetadataModal from './modals/EditMetadataModal';
 import ShareDocumentModal from './modals/ShareDocumentModal';
 import VersionHistoryModal from './modals/VersionHistoryModal';
@@ -10,7 +10,6 @@ import DeleteDocumentModal from './modals/DeleteDocumentModal';
 import DocumentViewerModal from '@/app/components/feature/DocumentViewerModal';
 
 const TEAL = '#0097B2';
-const ARCHIVE_STORAGE_KEY = 'org_archived_doc_ids';
 
 type ModalType = 'edit' | 'share' | 'version' | 'delete' | null;
 
@@ -21,8 +20,8 @@ interface Toast {
 }
 
 export default function AllDocumentsPage() {
-  const [documents, setDocuments] = useState<DocumentRecord[]>(MOCK_DOCUMENTS);
-  const [archivedIds, setArchivedIds] = useState<Set<string>>(new Set());
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [viewerDoc, setViewerDoc] = useState<DocumentRecord | null>(null);
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
@@ -35,6 +34,8 @@ export default function AllDocumentsPage() {
   const [modal, setModal] = useState<ModalType>(null);
   const [activeDoc, setActiveDoc] = useState<DocumentRecord | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     const id = Date.now();
@@ -42,21 +43,40 @@ export default function AllDocumentsPage() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
   };
 
-  useEffect(() => {
+  const loadDocuments = async () => {
     try {
-      const stored = localStorage.getItem(ARCHIVE_STORAGE_KEY);
-      if (stored) setArchivedIds(new Set(JSON.parse(stored)));
-    } catch { }
-  }, []);
-
-  const persistArchivedIds = (next: Set<string>) => {
-    setArchivedIds(next);
-    try {
-      localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(Array.from(next)));
-    } catch { }
+      setLoading(true);
+      setError('');
+      const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        let message = `Failed to load documents (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // Keep status-only message.
+        }
+        throw new Error(message);
+      }
+      const data = (await response.json()) as DocumentRecord[];
+      setDocuments(data ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load documents');
+      setDocuments([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const activeDocuments = documents.filter((d) => !archivedIds.has(d.id));
+  useEffect(() => {
+    void loadDocuments();
+  }, []);
+
+  const activeDocuments = documents;
 
   const filtered = activeDocuments.filter((d) => {
     const q = search.toLowerCase();
@@ -93,44 +113,116 @@ export default function AllDocumentsPage() {
   };
 
   const openViewer = (doc: DocumentRecord) => {
-    setViewerDoc(doc);
-    setActiveMenu(null);
+    void (async () => {
+      setActiveMenu(null);
+      try {
+        const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(doc.id)}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) {
+          setViewerDoc(doc);
+          showToast(`Opened cached data for "${doc.name}"`, 'error');
+          return;
+        }
+        const freshDoc = (await response.json()) as DocumentRecord;
+        setViewerDoc(freshDoc);
+      } catch {
+        setViewerDoc(doc);
+        showToast(`Failed to refresh "${doc.name}"`, 'error');
+      }
+    })();
   };
 
   const handleArchiveSingle = (doc: DocumentRecord) => {
-    persistArchivedIds(new Set([...archivedIds, doc.id]));
-    setSelected((prev) => { const next = new Set(prev); next.delete(doc.id); return next; });
-    setActiveMenu(null);
-    showToast(`"${doc.name}" moved to archive`);
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(doc.id)}/archive`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ archived: true }),
+        });
+        if (!response.ok) throw new Error('archive failed');
+        setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+        setSelected((prev) => { const next = new Set(prev); next.delete(doc.id); return next; });
+        setActiveMenu(null);
+        showToast(`"${doc.name}" moved to archive`);
+      } catch {
+        showToast(`Failed to archive "${doc.name}"`, 'error');
+      }
+    })();
   };
 
   const handleBulkArchive = () => {
-    const count = selected.size;
-    persistArchivedIds(new Set([...archivedIds, ...selected]));
-    setSelected(new Set());
-    showToast(`${count} document${count > 1 ? 's' : ''} moved to archive`);
+    void (async () => {
+      const ids = Array.from(selected);
+      const count = ids.length;
+      try {
+        await Promise.all(
+          ids.map((id) =>
+            fetch(`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(id)}/archive`, {
+              method: 'PATCH',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ archived: true }),
+            }),
+          ),
+        );
+        setDocuments((prev) => prev.filter((d) => !selected.has(d.id)));
+        setSelected(new Set());
+        showToast(`${count} document${count > 1 ? 's' : ''} moved to archive`);
+      } catch {
+        showToast('Failed to archive selected documents', 'error');
+      }
+    })();
   };
 
   const handleMetaSave = (doc: DocumentRecord, metadata: Record<string, string>) => {
-    setDocuments((prev) =>
-      prev.map((d) => (d.id === doc.id ? { ...d, metadata, lastUpdated: new Date().toISOString().split('T')[0] } : d))
-    );
-    setModal(null);
-    showToast('Metadata updated successfully');
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(doc.id)}/metadata`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ metadata }),
+        });
+        if (!response.ok) throw new Error('metadata update failed');
+        setDocuments((prev) =>
+          prev.map((d) => (d.id === doc.id ? { ...d, metadata, lastUpdated: new Date().toISOString().split('T')[0] } : d)),
+        );
+        setModal(null);
+        showToast('Metadata updated successfully');
+      } catch {
+        showToast('Failed to update metadata', 'error');
+      }
+    })();
   };
 
   const handleDelete = (ids: string[]) => {
-    setDocuments((prev) => prev.filter((d) => !ids.includes(d.id)));
-    const nextArchived = new Set(archivedIds);
-    ids.forEach((id) => nextArchived.delete(id));
-    persistArchivedIds(nextArchived);
-    setSelected((prev) => {
-      const next = new Set(prev);
-      ids.forEach((id) => next.delete(id));
-      return next;
-    });
-    setModal(null);
-    showToast(`${ids.length} document${ids.length > 1 ? 's' : ''} deleted`);
+    void (async () => {
+      try {
+        await Promise.all(
+          ids.map((id) =>
+            fetch(`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(id)}`, {
+              method: 'DELETE',
+              credentials: 'include',
+            }),
+          ),
+        );
+        setDocuments((prev) => prev.filter((d) => !ids.includes(d.id)));
+        setSelected((prev) => {
+          const next = new Set(prev);
+          ids.forEach((id) => next.delete(id));
+          return next;
+        });
+        setModal(null);
+        showToast(`${ids.length} document${ids.length > 1 ? 's' : ''} deleted`);
+      } catch {
+        showToast('Failed to delete document(s)', 'error');
+      }
+    })();
   };
 
   const handleBulkDownload = () => {
@@ -219,14 +311,19 @@ export default function AllDocumentsPage() {
           >
             <i className="ri-archive-line" />
             Archived
-            {archivedIds.size > 0 && (
-              <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
-                {archivedIds.size}
-              </span>
-            )}
           </Link>
         </div>
       </div>
+      {loading && (
+        <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-500 mb-4">
+          Loading documents...
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 mb-4">
+          {error}
+        </div>
+      )}
 
       {/* Search + Filters */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
@@ -255,7 +352,7 @@ export default function AllDocumentsPage() {
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-600 outline-none bg-white cursor-pointer w-full"
           >
             <option value="">All Categories</option>
-            {MOCK_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            {Array.from(new Set(activeDocuments.map((d) => d.category))).map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
 
           {/* Visibility filter */}
@@ -278,7 +375,7 @@ export default function AllDocumentsPage() {
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-600 outline-none bg-white cursor-pointer w-full"
           >
             <option value="">All Uploaders</option>
-            {MOCK_UPLOADERS.map((u) => <option key={u} value={u}>{u}</option>)}
+            {Array.from(new Set(activeDocuments.map((d) => d.uploadedBy))).map((u) => <option key={u} value={u}>{u}</option>)}
           </select>
 
           {/* Date range */}
@@ -341,8 +438,8 @@ export default function AllDocumentsPage() {
       )}
 
       {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className="bg-white rounded-xl border border-gray-200 min-h-[70vh] flex flex-col">
+        <div className="overflow-x-auto flex-1">
           <table className="w-full min-w-[1100px]">
             <thead>
               <tr className="border-b border-gray-100">

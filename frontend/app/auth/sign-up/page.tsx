@@ -1,38 +1,53 @@
 "use client";
 
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 const industries = [
-  'Legal',
-  'Healthcare',
-  'Insurance',
-  'Finance',
-  'Government',
-  'Education',
-  'Other',
+  "Legal",
+  "Healthcare",
+  "Insurance",
+  "Finance",
+  "Government",
+  "Education",
+  "Other",
 ];
 
 const plans = [
-  { id: 'starter', name: 'Starter', price: '$49/mo', description: 'Up to 5 users, 100GB storage' },
-  { id: 'professional', name: 'Professional', price: '$149/mo', description: 'Up to 25 users, 500GB storage' },
-  { id: 'enterprise', name: 'Enterprise', price: 'Custom', description: 'Unlimited users, dedicated support' },
+  {
+    id: "starter",
+    name: "Starter",
+    price: "$49/mo",
+    description: "Up to 5 users, 100GB storage",
+  },
+  {
+    id: "professional",
+    name: "Professional",
+    price: "$149/mo",
+    description: "Up to 25 users, 500GB storage",
+  },
+  {
+    id: "enterprise",
+    name: "Enterprise",
+    price: "Custom",
+    description: "Unlimited users, dedicated support",
+  },
 ];
 
 export default function SignUp() {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
-    orgName: '',
-    firstName: '',
-    lastName: '',
-    email: '',
-    phone: '',
-    industry: '',
-    plan: 'professional',
-    password: '',
-    confirmPassword: '',
+    orgName: "",
+    firstName: "",
+    lastName: "",
+    email: "",
+    phone: "",
+    industry: "",
+    plan: "professional",
+    password: "",
+    confirmPassword: "",
     agreeTerms: false,
   });
   const [showPassword, setShowPassword] = useState(false);
@@ -52,7 +67,7 @@ export default function SignUp() {
     // Simulate API call
     await new Promise((resolve) => setTimeout(resolve, 2000));
     setIsLoading(false);
-    router.push('/dashboard');
+    router.push("/dashboard");
   };
 
   const renderStepIndicator = () => (
@@ -60,13 +75,13 @@ export default function SignUp() {
       {[1, 2, 3].map((s) => (
         <div
           key={s}
-          className={`flex items-center gap-2 ${s !== 3 ? 'flex-1' : ''}`}
+          className={`flex items-center gap-2 ${s !== 3 ? "flex-1" : ""}`}
         >
           <div
             className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
               s <= step
-                ? 'bg-brand-cyan text-white'
-                : 'bg-brand-surface text-brand-muted border border-brand-border'
+                ? "bg-brand-cyan text-white"
+                : "bg-brand-surface text-brand-muted border border-brand-border"
             }`}
           >
             {s < step ? <i className="ri-check-line" /> : s}
@@ -74,7 +89,7 @@ export default function SignUp() {
           {s !== 3 && (
             <div
               className={`flex-1 h-0.5 transition-colors ${
-                s < step ? 'bg-brand-cyan' : 'bg-brand-border'
+                s < step ? "bg-brand-cyan" : "bg-brand-border"
               }`}
             />
           )}
@@ -95,7 +110,9 @@ export default function SignUp() {
             type="text"
             required
             value={formData.orgName}
-            onChange={(e) => setFormData({ ...formData, orgName: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, orgName: e.target.value })
+            }
             className="w-full pl-10 pr-4 py-2.5 bg-brand-surface border border-brand-border rounded-lg text-sm text-brand-navy focus:outline-none focus:border-brand-cyan transition-colors"
             placeholder="Acme Corporation"
           />
@@ -111,7 +128,9 @@ export default function SignUp() {
             type="text"
             required
             value={formData.firstName}
-            onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, firstName: e.target.value })
+            }
             className="w-full px-4 py-2.5 bg-brand-surface border border-brand-border rounded-lg text-sm text-brand-navy focus:outline-none focus:border-brand-cyan transition-colors"
             placeholder="John"
           />
@@ -124,7 +143,9 @@ export default function SignUp() {
             type="text"
             required
             value={formData.lastName}
-            onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, lastName: e.target.value })
+            }
             className="w-full px-4 py-2.5 bg-brand-surface border border-brand-border rounded-lg text-sm text-brand-navy focus:outline-none focus:border-brand-cyan transition-colors"
             placeholder="Doe"
           />
@@ -141,7 +162,9 @@ export default function SignUp() {
             type="email"
             required
             value={formData.email}
-            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, email: e.target.value })
+            }
             className="w-full pl-10 pr-4 py-2.5 bg-brand-surface border border-brand-border rounded-lg text-sm text-brand-navy focus:outline-none focus:border-brand-cyan transition-colors"
             placeholder="john@company.com"
           />
@@ -157,7 +180,9 @@ export default function SignUp() {
           <input
             type="tel"
             value={formData.phone}
-            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, phone: e.target.value })
+            }
             className="w-full pl-10 pr-4 py-2.5 bg-brand-surface border border-brand-border rounded-lg text-sm text-brand-navy focus:outline-none focus:border-brand-cyan transition-colors"
             placeholder="+1 (555) 000-0000"
           />
@@ -174,12 +199,16 @@ export default function SignUp() {
             required
             title="Industry"
             value={formData.industry}
-            onChange={(e) => setFormData({ ...formData, industry: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, industry: e.target.value })
+            }
             className="w-full pl-10 pr-4 py-2.5 bg-brand-surface border border-brand-border rounded-lg text-sm text-brand-navy focus:outline-none focus:border-brand-cyan transition-colors appearance-none"
           >
             <option value="">Select your industry</option>
             {industries.map((ind) => (
-              <option key={ind} value={ind}>{ind}</option>
+              <option key={ind} value={ind}>
+                {ind}
+              </option>
             ))}
           </select>
           <i className="ri-arrow-down-s-line absolute right-3 top-1/2 -translate-y-1/2 text-brand-muted pointer-events-none" />
@@ -190,14 +219,16 @@ export default function SignUp() {
 
   const renderStep2 = () => (
     <div className="space-y-3">
-      <p className="text-sm text-brand-body mb-4">Select the plan that fits your organization</p>
+      <p className="text-sm text-brand-body mb-4">
+        Select the plan that fits your organization
+      </p>
       {plans.map((plan) => (
         <label
           key={plan.id}
           className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
             formData.plan === plan.id
-              ? 'border-brand-cyan bg-brand-cyan-light/20'
-              : 'border-brand-border hover:border-brand-cyan/50'
+              ? "border-brand-cyan bg-brand-cyan-light/20"
+              : "border-brand-border hover:border-brand-cyan/50"
           }`}
         >
           <input
@@ -211,17 +242,20 @@ export default function SignUp() {
           <div className="flex-1">
             <div className="flex items-center justify-between">
               <span className="font-medium text-brand-navy">{plan.name}</span>
-              <span className="font-semibold text-brand-cyan">{plan.price}</span>
+              <span className="font-semibold text-brand-cyan">
+                {plan.price}
+              </span>
             </div>
             <p className="text-xs text-brand-muted mt-1">{plan.description}</p>
           </div>
         </label>
       ))}
 
-      {formData.plan === 'enterprise' && (
+      {formData.plan === "enterprise" && (
         <div className="mt-4 p-4 bg-brand-surface rounded-xl border border-brand-border">
           <p className="text-sm text-brand-body">
-            Our sales team will contact you to discuss custom pricing and requirements.
+            Our sales team will contact you to discuss custom pricing and
+            requirements.
           </p>
         </div>
       )}
@@ -237,21 +271,23 @@ export default function SignUp() {
         <div className="relative">
           <i className="ri-lock-line absolute left-3 top-1/2 -translate-y-1/2 text-brand-muted text-lg" />
           <input
-            type={showPassword ? 'text' : 'password'}
+            type={showPassword ? "text" : "password"}
             required
             value={formData.password}
-            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, password: e.target.value })
+            }
             className="w-full pl-10 pr-10 py-2.5 bg-brand-surface border border-brand-border rounded-lg text-sm text-brand-navy focus:outline-none focus:border-brand-cyan transition-colors"
             placeholder="Min 8 characters"
           />
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
-            aria-label={showPassword ? 'Hide password' : 'Show password'}
-            title={showPassword ? 'Hide password' : 'Show password'}
+            aria-label={showPassword ? "Hide password" : "Show password"}
+            title={showPassword ? "Hide password" : "Show password"}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-muted hover:text-brand-navy transition-colors"
           >
-            <i className={showPassword ? 'ri-eye-off-line' : 'ri-eye-line'} />
+            <i className={showPassword ? "ri-eye-off-line" : "ri-eye-line"} />
           </button>
         </div>
         <div className="flex gap-1 mt-2">
@@ -259,12 +295,16 @@ export default function SignUp() {
             <div
               key={i}
               className={`flex-1 h-1 rounded-full ${
-                formData.password.length >= i * 2 ? 'bg-green-500' : 'bg-brand-border'
+                formData.password.length >= i * 2
+                  ? "bg-green-500"
+                  : "bg-brand-border"
               }`}
             />
           ))}
         </div>
-        <p className="text-xs text-brand-muted mt-1">Use 8+ characters with letters, numbers & symbols</p>
+        <p className="text-xs text-brand-muted mt-1">
+          Use 8+ characters with letters, numbers & symbols
+        </p>
       </div>
 
       <div>
@@ -277,14 +317,17 @@ export default function SignUp() {
             type="password"
             required
             value={formData.confirmPassword}
-            onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, confirmPassword: e.target.value })
+            }
             className="w-full pl-10 pr-4 py-2.5 bg-brand-surface border border-brand-border rounded-lg text-sm text-brand-navy focus:outline-none focus:border-brand-cyan transition-colors"
             placeholder="Confirm your password"
           />
         </div>
-        {formData.confirmPassword && formData.password !== formData.confirmPassword && (
-          <p className="text-xs text-red-500 mt-1">Passwords do not match</p>
-        )}
+        {formData.confirmPassword &&
+          formData.password !== formData.confirmPassword && (
+            <p className="text-xs text-red-500 mt-1">Passwords do not match</p>
+          )}
       </div>
 
       <label className="flex items-start gap-2 cursor-pointer mt-4">
@@ -292,14 +335,20 @@ export default function SignUp() {
           type="checkbox"
           required
           checked={formData.agreeTerms}
-          onChange={(e) => setFormData({ ...formData, agreeTerms: e.target.checked })}
+          onChange={(e) =>
+            setFormData({ ...formData, agreeTerms: e.target.checked })
+          }
           className="mt-0.5 w-4 h-4 rounded border-brand-border text-brand-cyan focus:ring-brand-cyan"
         />
         <span className="text-sm text-brand-body">
-          I agree to the{' '}
-          <Link href="/terms" className="text-brand-cyan hover:underline">Terms of Service</Link>
-          {' '}and{' '}
-          <Link href="/privacy" className="text-brand-cyan hover:underline">Privacy Policy</Link>
+          I agree to the{" "}
+          <Link href="/terms" className="text-brand-cyan hover:underline">
+            Terms of Service
+          </Link>{" "}
+          and{" "}
+          <Link href="/privacy" className="text-brand-cyan hover:underline">
+            Privacy Policy
+          </Link>
         </span>
       </label>
     </div>
@@ -308,27 +357,28 @@ export default function SignUp() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-brand-bg p-4">
       <div className="w-full max-w-lg">
-        {/* Logo */}
-        <div className="flex items-center justify-center gap-3 mb-6">
-          <img
-            src="https://public.readdy.ai/ai/img_res/a0c14596-4612-41a7-bcf3-8ba14244b461.png"
-            alt="MEDCUBE"
-            className="h-10 w-auto"
-          />
-          <span className="font-outfit font-bold text-brand-navy text-xl tracking-wide">
-            MEDCUBE
-          </span>
-        </div>
-
         {/* Card */}
-        <div className="bg-white rounded-2xl border border-brand-border shadow-sm p-8">
+        <div className="bg-white rounded-2xl border border-brand-border shadow-sm p-6">
+          {/* Logo INSIDE card */}
+          <div className="flex items-center justify-center gap-3 mb-6">
+            <img
+              src="/images/logo_full.png"
+              alt="MEDCUBE"
+              className="h-12 w-auto object-contain"
+            />
+          </div>
+
+          {/* Title */}
           <div className="text-center mb-6">
-            <h1 className="text-xl font-semibold text-brand-navy mb-1">Create your account</h1>
-            <p className="text-sm text-brand-muted">Start your 14-day free trial</p>
+            <h1 className="text-xl font-semibold text-brand-navy mb-1">
+              Create your account
+            </h1>
+            <p className="text-sm text-brand-muted">
+              Start your 14-day free trial
+            </p>
           </div>
 
           {renderStepIndicator()}
-
           <form onSubmit={handleSubmit}>
             {step === 1 && renderStep1()}
             {step === 2 && renderStep2()}
@@ -365,43 +415,24 @@ export default function SignUp() {
                       Creating account...
                     </>
                   ) : (
-                    'Create Account'
+                    "Create Account"
                   )}
                 </button>
               )}
             </div>
           </form>
 
-          {/* Divider */}
-          {step === 1 && (
-            <>
-              <div className="flex items-center gap-4 my-6">
-                <div className="flex-1 h-px bg-brand-border" />
-                <span className="text-xs text-brand-muted uppercase tracking-wide">Or sign up with</span>
-                <div className="flex-1 h-px bg-brand-border" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <button className="flex items-center justify-center gap-2 px-4 py-2.5 border border-brand-border rounded-lg hover:bg-brand-surface transition-colors">
-                  <i className="ri-google-fill text-lg text-red-500" />
-                  <span className="text-sm font-medium text-brand-body">Google</span>
-                </button>
-                <button className="flex items-center justify-center gap-2 px-4 py-2.5 border border-brand-border rounded-lg hover:bg-brand-surface transition-colors">
-                  <i className="ri-microsoft-fill text-lg text-blue-600" />
-                  <span className="text-sm font-medium text-brand-body">Microsoft</span>
-                </button>
-              </div>
-            </>
-          )}
+          {/* Sign in link */}
+          <p className="text-center mt-6 text-sm text-brand-body">
+            Already have an account?{" "}
+            <Link
+              href="/auth/signin"
+              className="text-brand-cyan font-medium hover:underline"
+            >
+              Sign in
+            </Link>
+          </p>
         </div>
-
-        {/* Sign in link */}
-        <p className="text-center mt-6 text-sm text-brand-body">
-          Already have an account?{' '}
-          <Link href="/auth/signin" className="text-brand-cyan font-medium hover:underline">
-            Sign in
-          </Link>
-        </p>
 
         {/* Back to home */}
         <Link

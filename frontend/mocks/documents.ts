@@ -18,6 +18,7 @@ export interface DocumentRecord {
   lastUpdated: string;
   fileSize: string;
   fileType: string;
+  filePath?: string;
   metadata: Record<string, string>;
   versions: DocumentVersion[];
   contentSnippet?: string;

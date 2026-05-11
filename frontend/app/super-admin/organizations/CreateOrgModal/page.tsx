@@ -18,8 +18,6 @@ type AdminEntry = {
 
 const industries = ['Legal Services', 'Finance', 'Healthcare', 'Insurance', 'Real Estate', 'Technology', 'Consulting', 'Education', 'Other'];
 const planTypes = ['Manual', 'Subscription'] as const;
-const manualPlans = ['3 Month Plan', '6 Month Plan', '1 Year Plan'];
-const subPlans = ['Starter', 'Professional', 'Enterprise'];
 
 const emptyAdmin = (): AdminEntry => ({
   id: `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -29,6 +27,7 @@ const emptyAdmin = (): AdminEntry => ({
 
 export default function CreateOrgModal({ org, onClose, onSave }: CreateOrgModalProps) {
   const isEdit = !!org;
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
   const [form, setForm] = useState({
     name: '',
     email: '',
@@ -42,6 +41,40 @@ export default function CreateOrgModal({ org, onClose, onSave }: CreateOrgModalP
   });
   const [admins, setAdmins] = useState<AdminEntry[]>([emptyAdmin()]);
   const [adminError, setAdminError] = useState('');
+  const [manualPlanOptions, setManualPlanOptions] = useState<string[]>([]);
+  const [subPlanOptions, setSubPlanOptions] = useState<string[]>([]);
+  const [plansLoading, setPlansLoading] = useState(false);
+
+  useEffect(() => {
+    const loadPlanOptions = async () => {
+      try {
+        setPlansLoading(true);
+        const response = await fetch(`${API_BASE_URL}/super-admin/billing`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load billing plans (${response.status})`);
+        }
+        const payload = (await response.json()) as {
+          manualPlans?: Array<{ name: string }>;
+          subscriptionPlans?: Array<{ name: string }>;
+        };
+        const nextManual = (payload.manualPlans ?? []).map((plan) => plan.name).filter(Boolean);
+        const nextSub = (payload.subscriptionPlans ?? []).map((plan) => plan.name).filter(Boolean);
+        setManualPlanOptions(nextManual);
+        setSubPlanOptions(nextSub);
+      } catch {
+        setManualPlanOptions([]);
+        setSubPlanOptions([]);
+      } finally {
+        setPlansLoading(false);
+      }
+    };
+
+    void loadPlanOptions();
+  }, [API_BASE_URL]);
 
   useEffect(() => {
     if (!org) {
@@ -117,7 +150,16 @@ export default function CreateOrgModal({ org, onClose, onSave }: CreateOrgModalP
     onSave(nextOrg);
   };
 
-  const planOptions = form.planType === 'Manual' ? manualPlans : subPlans;
+  const planOptions = form.planType === 'Manual' ? manualPlanOptions : subPlanOptions;
+
+  useEffect(() => {
+    if (planOptions.length === 0) {
+      return;
+    }
+    if (!planOptions.includes(form.planName)) {
+      setForm((prev) => ({ ...prev, planName: planOptions[0] }));
+    }
+  }, [form.planName, planOptions]);
 
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center">
@@ -180,8 +222,9 @@ export default function CreateOrgModal({ org, onClose, onSave }: CreateOrgModalP
                       key={planType}
                       type="button"
                       onClick={() => {
+                        const nextOptions = planType === 'Manual' ? manualPlanOptions : subPlanOptions;
                         handleChange('planType', planType);
-                        handleChange('planName', planType === 'Manual' ? manualPlans[0] : subPlans[0]);
+                        handleChange('planName', nextOptions[0] ?? '');
                       }}
                       className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all whitespace-nowrap ${form.planType === planType ? 'bg-[#0097B2] text-white border-[#0097B2]' : 'border-brand-border text-brand-muted hover:text-brand-navy'}`}
                     >
@@ -192,8 +235,18 @@ export default function CreateOrgModal({ org, onClose, onSave }: CreateOrgModalP
               </div>
               <div>
                 <label className="block text-xs font-medium text-brand-muted mb-1.5">Plan Name</label>
-                <select title="Plan name" value={form.planName} onChange={(e) => handleChange('planName', e.target.value)} className="w-full px-3 py-2 border border-brand-border rounded-lg text-sm text-brand-body focus:outline-none focus:border-[#0097B2] transition-colors bg-white">
-                  {planOptions.map((plan) => <option key={plan}>{plan}</option>)}
+                <select
+                  title="Plan name"
+                  value={form.planName}
+                  onChange={(e) => handleChange('planName', e.target.value)}
+                  disabled={plansLoading || planOptions.length === 0}
+                  className="w-full px-3 py-2 border border-brand-border rounded-lg text-sm text-brand-body focus:outline-none focus:border-[#0097B2] transition-colors bg-white disabled:opacity-60"
+                >
+                  {planOptions.length === 0 ? (
+                    <option value="">{plansLoading ? 'Loading plans...' : `No ${form.planType.toLowerCase()} plans available`}</option>
+                  ) : (
+                    planOptions.map((plan) => <option key={plan}>{plan}</option>)
+                  )}
                 </select>
               </div>
               <div className="col-span-2">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 interface ManualPlan {
   id: string;
@@ -27,37 +27,6 @@ interface TopUpPlan {
   price: number;
   usageCount: number;
 }
-
-const initManualPlans: ManualPlan[] = [
-  { id: 'mp-1', name: 'Basic Quarterly', duration: '3 Months', price: 450, pageCount: 3000, orgsCount: 12 },
-  { id: 'mp-2', name: 'Standard Semi-Annual', duration: '6 Months', price: 900, pageCount: 5000, orgsCount: 18 },
-  { id: 'mp-3', name: 'Premium Annual', duration: '1 Year', price: 1800, pageCount: 10000, orgsCount: 6 },
-];
-
-const initSubPlans: SubPlan[] = [
-  {
-    id: 'sp-1', name: 'Starter', monthlyPrice: 49, monthlyPageLimit: 2000,
-    features: ['Up to 5 users', '2,000 doc pages/mo', 'Basic reporting', 'Email support'],
-    orgsCount: 14,
-  },
-  {
-    id: 'sp-2', name: 'Professional', monthlyPrice: 149, monthlyPageLimit: 10000,
-    features: ['Up to 25 users', '10,000 doc pages/mo', 'Advanced analytics', 'Priority support', 'API access'],
-    orgsCount: 28,
-  },
-  {
-    id: 'sp-3', name: 'Enterprise', monthlyPrice: 699, monthlyPageLimit: 50000,
-    features: ['Unlimited users', '50,000 doc pages/mo', 'Custom integrations', 'Dedicated support', 'SLA guarantee', 'White-label'],
-    orgsCount: 6,
-  },
-];
-
-const initTopUpPlans: TopUpPlan[] = [
-  { id: 'tu-1', name: 'Small Top-Up', pages: 500, price: 25, usageCount: 18 },
-  { id: 'tu-2', name: 'Medium Top-Up', pages: 2000, price: 80, usageCount: 31 },
-  { id: 'tu-3', name: 'Large Top-Up', pages: 5000, price: 180, usageCount: 12 },
-  { id: 'tu-4', name: 'Bulk Top-Up', pages: 10000, price: 320, usageCount: 5 },
-];
 
 const durationColors: Record<string, string> = {
   '3 Months': `bg-[#0097B2]/10 text-[#0097B2]`,
@@ -98,9 +67,13 @@ const summaryCards = [
 
 export default function BillingPage() {
   const [activeTab, setActiveTab] = useState<'manual' | 'subscription' | 'topup'>('manual');
-  const [manualPlans, setManualPlans] = useState<ManualPlan[]>(initManualPlans);
-  const [subPlans, setSubPlans] = useState<SubPlan[]>(initSubPlans);
-  const [topUpPlans, setTopUpPlans] = useState<TopUpPlan[]>(initTopUpPlans);
+  const [manualPlans, setManualPlans] = useState<ManualPlan[]>([]);
+  const [subPlans, setSubPlans] = useState<SubPlan[]>([]);
+  const [topUpPlans, setTopUpPlans] = useState<TopUpPlan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [error, setError] = useState('');
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
 
   // Manual plan modal
   const [showManualModal, setShowManualModal] = useState(false);
@@ -119,49 +92,201 @@ export default function BillingPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'manual' | 'sub' | 'topup'; id: string } | null>(null);
 
+  const loadBilling = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const response = await fetch(`${API_BASE_URL}/super-admin/billing`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        let message = `Failed to load billing (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // Keep status-only message.
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as {
+        manualPlans: ManualPlan[];
+        subscriptionPlans: SubPlan[];
+        topUpPlans: TopUpPlan[];
+      };
+
+      setManualPlans(payload.manualPlans ?? []);
+      setSubPlans(payload.subscriptionPlans ?? []);
+      setTopUpPlans(payload.topUpPlans ?? []);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Unable to load billing plans';
+      setError(message);
+      setManualPlans([]);
+      setSubPlans([]);
+      setTopUpPlans([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [API_BASE_URL]);
+
+  useEffect(() => {
+    void loadBilling();
+  }, [loadBilling]);
+
   const openManualCreate = () => { setEditManual(null); setManualForm({ name: '', duration: '3 Months', price: '', pageCount: '' }); setShowManualModal(true); };
   const openManualEdit = (p: ManualPlan) => { setEditManual(p); setManualForm({ name: p.name, duration: p.duration, price: String(p.price), pageCount: String(p.pageCount) }); setShowManualModal(true); };
-  const saveManual = () => {
+  const saveManual = async () => {
     if (!manualForm.name || !manualForm.price) return;
-    if (editManual) {
-      setManualPlans((prev) => prev.map((p) => p.id === editManual.id ? { ...p, ...manualForm, price: Number(manualForm.price), pageCount: Number(manualForm.pageCount) } : p));
-    } else {
-      setManualPlans((prev) => [...prev, { id: `mp-${Date.now()}`, ...manualForm, price: Number(manualForm.price), pageCount: Number(manualForm.pageCount), orgsCount: 0 }]);
+    try {
+      setActionLoading(true);
+      setError('');
+      const endpoint = editManual
+        ? `${API_BASE_URL}/super-admin/billing/manual-plans/${editManual.id}`
+        : `${API_BASE_URL}/super-admin/billing/manual-plans`;
+      const response = await fetch(endpoint, {
+        method: editManual ? 'PUT' : 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: manualForm.name,
+          duration: manualForm.duration,
+          price: Number(manualForm.price),
+          pageCount: Number(manualForm.pageCount || 0),
+        }),
+      });
+      if (!response.ok) {
+        let message = `Failed to ${editManual ? 'update' : 'create'} manual plan (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // Keep status-only message.
+        }
+        throw new Error(message);
+      }
+      await loadBilling();
+      setShowManualModal(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save manual plan');
+    } finally {
+      setActionLoading(false);
     }
-    setShowManualModal(false);
   };
 
   const openSubCreate = () => { setEditSub(null); setSubForm({ name: '', monthlyPrice: '', monthlyPageLimit: '', features: '' }); setShowSubModal(true); };
   const openSubEdit = (p: SubPlan) => { setEditSub(p); setSubForm({ name: p.name, monthlyPrice: String(p.monthlyPrice), monthlyPageLimit: String(p.monthlyPageLimit), features: p.features.join(', ') }); setShowSubModal(true); };
-  const saveSub = () => {
+  const saveSub = async () => {
     if (!subForm.name || !subForm.monthlyPrice) return;
-    const features = subForm.features.split(',').map((f) => f.trim()).filter(Boolean);
-    if (editSub) {
-      setSubPlans((prev) => prev.map((p) => p.id === editSub.id ? { ...p, name: subForm.name, monthlyPrice: Number(subForm.monthlyPrice), monthlyPageLimit: Number(subForm.monthlyPageLimit), features } : p));
-    } else {
-      setSubPlans((prev) => [...prev, { id: `sp-${Date.now()}`, name: subForm.name, monthlyPrice: Number(subForm.monthlyPrice), monthlyPageLimit: Number(subForm.monthlyPageLimit), features, orgsCount: 0 }]);
+    try {
+      setActionLoading(true);
+      setError('');
+      const endpoint = editSub
+        ? `${API_BASE_URL}/super-admin/billing/subscription-plans/${editSub.id}`
+        : `${API_BASE_URL}/super-admin/billing/subscription-plans`;
+      const response = await fetch(endpoint, {
+        method: editSub ? 'PUT' : 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: subForm.name,
+          monthlyPrice: Number(subForm.monthlyPrice),
+          monthlyPageLimit: Number(subForm.monthlyPageLimit || 0),
+          features: subForm.features,
+        }),
+      });
+      if (!response.ok) {
+        let message = `Failed to ${editSub ? 'update' : 'create'} subscription plan (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // Keep status-only message.
+        }
+        throw new Error(message);
+      }
+      await loadBilling();
+      setShowSubModal(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save subscription plan');
+    } finally {
+      setActionLoading(false);
     }
-    setShowSubModal(false);
   };
 
   const openTopUpCreate = () => { setEditTopUp(null); setTopUpForm({ name: '', pages: '', price: '' }); setShowTopUpModal(true); };
   const openTopUpEdit = (p: TopUpPlan) => { setEditTopUp(p); setTopUpForm({ name: p.name, pages: String(p.pages), price: String(p.price) }); setShowTopUpModal(true); };
-  const saveTopUp = () => {
+  const saveTopUp = async () => {
     if (!topUpForm.name || !topUpForm.pages || !topUpForm.price) return;
-    if (editTopUp) {
-      setTopUpPlans((prev) => prev.map((p) => p.id === editTopUp.id ? { ...p, name: topUpForm.name, pages: Number(topUpForm.pages), price: Number(topUpForm.price) } : p));
-    } else {
-      setTopUpPlans((prev) => [...prev, { id: `tu-${Date.now()}`, name: topUpForm.name, pages: Number(topUpForm.pages), price: Number(topUpForm.price), usageCount: 0 }]);
+    try {
+      setActionLoading(true);
+      setError('');
+      const endpoint = editTopUp
+        ? `${API_BASE_URL}/super-admin/billing/topup-plans/${editTopUp.id}`
+        : `${API_BASE_URL}/super-admin/billing/topup-plans`;
+      const response = await fetch(endpoint, {
+        method: editTopUp ? 'PUT' : 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: topUpForm.name,
+          pages: Number(topUpForm.pages),
+          price: Number(topUpForm.price),
+        }),
+      });
+      if (!response.ok) {
+        let message = `Failed to ${editTopUp ? 'update' : 'create'} top-up plan (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // Keep status-only message.
+        }
+        throw new Error(message);
+      }
+      await loadBilling();
+      setShowTopUpModal(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save top-up plan');
+    } finally {
+      setActionLoading(false);
     }
-    setShowTopUpModal(false);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deleteTarget) return;
-    if (deleteTarget.type === 'manual') setManualPlans((prev) => prev.filter((p) => p.id !== deleteTarget.id));
-    else if (deleteTarget.type === 'sub') setSubPlans((prev) => prev.filter((p) => p.id !== deleteTarget.id));
-    else setTopUpPlans((prev) => prev.filter((p) => p.id !== deleteTarget.id));
-    setDeleteTarget(null);
+    try {
+      setActionLoading(true);
+      setError('');
+      const endpoint =
+        deleteTarget.type === 'manual'
+          ? `${API_BASE_URL}/super-admin/billing/manual-plans/${deleteTarget.id}`
+          : deleteTarget.type === 'sub'
+            ? `${API_BASE_URL}/super-admin/billing/subscription-plans/${deleteTarget.id}`
+            : `${API_BASE_URL}/super-admin/billing/topup-plans/${deleteTarget.id}`;
+      const response = await fetch(endpoint, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        let message = `Failed to delete plan (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // Keep status-only message.
+        }
+        throw new Error(message);
+      }
+      await loadBilling();
+      setDeleteTarget(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete plan');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const tabs = [
@@ -176,6 +301,16 @@ export default function BillingPage() {
         <h1 className="font-outfit font-bold text-2xl text-brand-navy">Billing Management</h1>
         <p className="text-brand-muted text-sm mt-0.5">Manage manual, subscription, and top-up plans for organizations</p>
       </div>
+      {loading && (
+        <div className="rounded-lg border border-brand-border bg-white px-4 py-3 text-sm text-brand-muted">
+          Loading billing plans...
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -220,7 +355,7 @@ export default function BillingPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <p className="text-sm text-brand-muted">Duration-based plans assigned manually to organizations.</p>
-                <button onClick={openManualCreate} className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-[#0097B2] text-white rounded-lg text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap">
+                <button disabled={actionLoading} onClick={openManualCreate} className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-[#0097B2] text-white rounded-lg text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap disabled:opacity-60">
                   <i className="ri-add-line" />Add Manual Plan
                 </button>
               </div>
@@ -258,7 +393,7 @@ export default function BillingPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <p className="text-sm text-brand-muted">Monthly recurring subscription plans.</p>
-                <button onClick={openSubCreate} className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-[#0097B2] text-white rounded-lg text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap">
+                <button disabled={actionLoading} onClick={openSubCreate} className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-[#0097B2] text-white rounded-lg text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap disabled:opacity-60">
                   <i className="ri-add-line" />Add Subscription Plan
                 </button>
               </div>
@@ -318,7 +453,7 @@ export default function BillingPage() {
                     </div>
                   </div>
                 </div>
-                <button onClick={openTopUpCreate} className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-[#0097B2] text-white rounded-lg text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap flex-shrink-0">
+                <button disabled={actionLoading} onClick={openTopUpCreate} className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-[#0097B2] text-white rounded-lg text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap flex-shrink-0 disabled:opacity-60">
                   <i className="ri-add-line" />Create Top-Up Plan
                 </button>
               </div>
@@ -387,7 +522,7 @@ export default function BillingPage() {
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={() => setShowManualModal(false)} className="flex-1 py-2.5 rounded-lg border border-brand-border text-sm font-medium text-brand-body hover:bg-brand-surface transition-colors whitespace-nowrap">Cancel</button>
-              <button onClick={saveManual} className="flex-1 py-2.5 rounded-lg bg-[#0097B2] text-white text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap">{editManual ? 'Save Changes' : 'Add Plan'}</button>
+              <button disabled={actionLoading} onClick={saveManual} className="flex-1 py-2.5 rounded-lg bg-[#0097B2] text-white text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap disabled:opacity-60">{actionLoading ? 'Saving...' : editManual ? 'Save Changes' : 'Add Plan'}</button>
             </div>
           </div>
         </div>
@@ -424,7 +559,7 @@ export default function BillingPage() {
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={() => setShowSubModal(false)} className="flex-1 py-2.5 rounded-lg border border-brand-border text-sm font-medium text-brand-body hover:bg-brand-surface transition-colors whitespace-nowrap">Cancel</button>
-              <button onClick={saveSub} className="flex-1 py-2.5 rounded-lg bg-[#0097B2] text-white text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap">{editSub ? 'Save Changes' : 'Add Plan'}</button>
+              <button disabled={actionLoading} onClick={saveSub} className="flex-1 py-2.5 rounded-lg bg-[#0097B2] text-white text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap disabled:opacity-60">{actionLoading ? 'Saving...' : editSub ? 'Save Changes' : 'Add Plan'}</button>
             </div>
           </div>
         </div>
@@ -457,7 +592,7 @@ export default function BillingPage() {
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={() => setShowTopUpModal(false)} className="flex-1 py-2.5 rounded-lg border border-brand-border text-sm font-medium text-brand-body hover:bg-brand-surface transition-colors whitespace-nowrap">Cancel</button>
-              <button onClick={saveTopUp} className="flex-1 py-2.5 rounded-lg bg-[#0097B2] text-white text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap">{editTopUp ? 'Save Changes' : 'Create Plan'}</button>
+              <button disabled={actionLoading} onClick={saveTopUp} className="flex-1 py-2.5 rounded-lg bg-[#0097B2] text-white text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap disabled:opacity-60">{actionLoading ? 'Saving...' : editTopUp ? 'Save Changes' : 'Create Plan'}</button>
             </div>
           </div>
         </div>
@@ -477,7 +612,7 @@ export default function BillingPage() {
             </div>
             <div className="flex gap-3 w-full">
               <button onClick={() => setDeleteTarget(null)} className="flex-1 py-2.5 rounded-lg border border-brand-border text-sm font-medium text-brand-body hover:bg-brand-surface transition-colors whitespace-nowrap">Cancel</button>
-              <button onClick={confirmDelete} className="flex-1 py-2.5 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors whitespace-nowrap">Delete</button>
+              <button disabled={actionLoading} onClick={confirmDelete} className="flex-1 py-2.5 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors whitespace-nowrap disabled:opacity-60">{actionLoading ? 'Deleting...' : 'Delete'}</button>
             </div>
           </div>
         </div>

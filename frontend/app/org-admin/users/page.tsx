@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from 'react';
-import { MOCK_USERS } from './mockData';
+import { useEffect, useState } from 'react';
 import type { OrgUser } from './types';
 import UserModal from './UserModal/page';
 import DeleteUserModal from './DeleteUserModal/page';
@@ -18,7 +17,8 @@ interface Toast {
 }
 
 export default function UserManagementPage() {
-  const [users, setUsers] = useState<OrgUser[]>(MOCK_USERS);
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+  const [users, setUsers] = useState<OrgUser[]>([]);
   const [search, setSearch] = useState('');
   const [filterRole, setFilterRole] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -26,6 +26,9 @@ export default function UserManagementPage() {
   const [activeUser, setActiveUser] = useState<OrgUser | null>(null);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     const id = Date.now();
@@ -41,6 +44,33 @@ export default function UserManagementPage() {
     return true;
   });
 
+  const loadUsers = async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const response = await fetch(`${API_BASE_URL}/protected/org-admin/users`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { message?: string };
+        throw new Error(body.message || `Failed to load users (${response.status})`);
+      }
+      const data = (await response.json()) as OrgUser[];
+      setUsers(data ?? []);
+    } catch (e) {
+      setUsers([]);
+      setError(e instanceof Error ? e.message : 'Failed to load users');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadUsers();
+  }, []);
+
   const openModal = (type: ModalType, user?: OrgUser) => {
     setActiveUser(user ?? null);
     setModal(type);
@@ -48,33 +78,91 @@ export default function UserManagementPage() {
   };
 
   const handleSave = (data: Omit<OrgUser, 'id' | 'createdDate' | 'avatar'> & { password?: string }) => {
-    if (modal === 'create') {
-      const initials = data.name.split(' ').map((part: string) => part[0]).join('').substring(0, 2).toUpperCase();
-      const newUser: OrgUser = {
-        id: `u${Date.now()}`,
-        ...data,
-        avatar: initials,
-        createdDate: new Date().toISOString().split('T')[0],
-      };
-      setUsers((prev) => [newUser, ...prev]);
-      showToast(`User "${data.name}" created successfully`);
-    } else if (modal === 'edit' && activeUser) {
-      setUsers((prev) => prev.map((u) => (u.id === activeUser.id ? { ...u, ...data } : u)));
-      showToast(`User "${data.name}" updated successfully`);
-    }
-    setModal(null);
+    void (async () => {
+      try {
+        setActionLoading(true);
+        if (modal === 'create') {
+          const response = await fetch(`${API_BASE_URL}/protected/org-admin/users`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+          });
+          if (!response.ok) {
+            const body = (await response.json().catch(() => ({}))) as { message?: string };
+            throw new Error(body.message || `Failed to create user (${response.status})`);
+          }
+          showToast(`User "${data.name}" created successfully`);
+        } else if (modal === 'edit' && activeUser) {
+          const response = await fetch(`${API_BASE_URL}/protected/org-admin/users/${encodeURIComponent(activeUser.id)}`, {
+            method: 'PUT',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+          });
+          if (!response.ok) {
+            const body = (await response.json().catch(() => ({}))) as { message?: string };
+            throw new Error(body.message || `Failed to update user (${response.status})`);
+          }
+          showToast(`User "${data.name}" updated successfully`);
+        }
+        setModal(null);
+        await loadUsers();
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : 'Failed to save user', 'error');
+      } finally {
+        setActionLoading(false);
+      }
+    })();
   };
 
   const handleDelete = (id: string) => {
-    const user = users.find((u) => u.id === id);
-    setUsers((prev) => prev.filter((u) => u.id !== id));
-    setModal(null);
-    showToast(`User "${user?.name}" deleted`);
+    void (async () => {
+      try {
+        setActionLoading(true);
+        const user = users.find((u) => u.id === id);
+        const response = await fetch(`${API_BASE_URL}/protected/org-admin/users/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+        if (!response.ok) {
+          const body = (await response.json().catch(() => ({}))) as { message?: string };
+          throw new Error(body.message || `Failed to delete user (${response.status})`);
+        }
+        setModal(null);
+        showToast(`User "${user?.name}" deleted`);
+        await loadUsers();
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : 'Failed to delete user', 'error');
+      } finally {
+        setActionLoading(false);
+      }
+    })();
   };
 
-  const handleReset = () => {
-    setModal(null);
-    showToast(`Password reset for "${activeUser?.name}"`);
+  const handleReset = (newPassword: string) => {
+    void (async () => {
+      if (!activeUser) return;
+      try {
+        setActionLoading(true);
+        const response = await fetch(`${API_BASE_URL}/protected/org-admin/users/${encodeURIComponent(activeUser.id)}/reset-password`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: newPassword }),
+        });
+        if (!response.ok) {
+          const body = (await response.json().catch(() => ({}))) as { message?: string };
+          throw new Error(body.message || `Failed to reset password (${response.status})`);
+        }
+        setModal(null);
+        showToast(`Password reset for "${activeUser.name}"`);
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : 'Failed to reset password', 'error');
+      } finally {
+        setActionLoading(false);
+      }
+    })();
   };
 
   const activeCount = users.filter((u) => u.status === 'Active').length;
@@ -100,6 +188,7 @@ export default function UserManagementPage() {
         </div>
         <button
           onClick={() => openModal('create')}
+          disabled={actionLoading}
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
           style={{ background: TEAL }}
         >
@@ -107,6 +196,16 @@ export default function UserManagementPage() {
           Create User
         </button>
       </div>
+      {loading && (
+        <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-500 mb-4">
+          Loading users...
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 mb-4">
+          {error}
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
@@ -273,13 +372,13 @@ export default function UserManagementPage() {
 
       {/* Modals */}
       {(modal === 'create' || modal === 'edit') && (
-        <UserModal user={activeUser} onClose={() => setModal(null)} onSave={handleSave} />
+        <UserModal user={activeUser} onClose={() => (actionLoading ? null : setModal(null))} onSave={handleSave} />
       )}
       {modal === 'delete' && activeUser && (
-        <DeleteUserModal user={activeUser} onClose={() => setModal(null)} onConfirm={handleDelete} />
+        <DeleteUserModal user={activeUser} onClose={() => (actionLoading ? null : setModal(null))} onConfirm={handleDelete} />
       )}
       {modal === 'reset' && activeUser && (
-        <ResetPasswordModal user={activeUser} onClose={() => setModal(null)} onReset={handleReset} />
+        <ResetPasswordModal user={activeUser} onClose={() => (actionLoading ? null : setModal(null))} onReset={handleReset} />
       )}
     </div>
   );

@@ -2,12 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { MOCK_DOCUMENTS } from '../../../../mocks/documents';
 import type { DocumentRecord } from '../../../../mocks/documents';
 import DocumentViewerModal from '@/app/components/feature/DocumentViewerModal';
 
 const TEAL = '#0097B2';
-const ARCHIVE_STORAGE_KEY = 'org_archived_doc_ids';
 
 interface Toast {
   id: number;
@@ -16,6 +14,7 @@ interface Toast {
 }
 
 export default function ArchivedDocumentsPage() {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
   const router = useRouter();
   const [archivedDocs, setArchivedDocs] = useState<DocumentRecord[]>([]);
   const [search, setSearch] = useState('');
@@ -23,24 +22,29 @@ export default function ArchivedDocumentsPage() {
   const [viewerDoc, setViewerDoc] = useState<DocumentRecord | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DocumentRecord[] | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  // Load archived docs from localStorage on mount
-  useEffect(() => {
+  const loadArchived = async () => {
     try {
-      const stored = localStorage.getItem(ARCHIVE_STORAGE_KEY);
-      const ids: string[] = stored ? JSON.parse(stored) : [];
-      const docs = MOCK_DOCUMENTS.filter((d) => ids.includes(d.id));
-      setArchivedDocs(docs);
-    } catch {
+      setLoading(true);
+      setError('');
+      const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents?archived=1`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) throw new Error(`Failed to load archived documents (${response.status})`);
+      const docs = (await response.json()) as DocumentRecord[];
+      setArchivedDocs(docs ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load archived documents');
       setArchivedDocs([]);
+    } finally {
+      setLoading(false);
     }
-  }, []);
-
-  const persistIds = (docs: DocumentRecord[]) => {
-    try {
-      localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(docs.map((d) => d.id)));
-    } catch {}
   };
+  useEffect(() => { void loadArchived(); }, []);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     const id = Date.now();
@@ -68,21 +72,49 @@ export default function ArchivedDocumentsPage() {
   };
 
   const handleRestore = (ids: string[]) => {
-    const next = archivedDocs.filter((d) => !ids.includes(d.id));
-    setArchivedDocs(next);
-    persistIds(next);
-    setSelected(new Set());
-    showToast(`${ids.length} document${ids.length > 1 ? 's' : ''} restored successfully`);
+    void (async () => {
+      try {
+        await Promise.all(
+          ids.map((id) =>
+            fetch(`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(id)}/archive`, {
+              method: 'PATCH',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ archived: false }),
+            }),
+          ),
+        );
+        const next = archivedDocs.filter((d) => !ids.includes(d.id));
+        setArchivedDocs(next);
+        setSelected(new Set());
+        showToast(`${ids.length} document${ids.length > 1 ? 's' : ''} restored successfully`);
+      } catch {
+        showToast('Failed to restore selected documents', 'error');
+      }
+    })();
   };
 
   const handlePermanentDelete = (docs: DocumentRecord[]) => {
-    const ids = docs.map((d) => d.id);
-    const next = archivedDocs.filter((d) => !ids.includes(d.id));
-    setArchivedDocs(next);
-    persistIds(next);
-    setSelected(new Set());
-    setConfirmDelete(null);
-    showToast(`${docs.length} document${docs.length > 1 ? 's' : ''} permanently deleted`, 'error');
+    void (async () => {
+      try {
+        const ids = docs.map((d) => d.id);
+        await Promise.all(
+          ids.map((id) =>
+            fetch(`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(id)}`, {
+              method: 'DELETE',
+              credentials: 'include',
+            }),
+          ),
+        );
+        const next = archivedDocs.filter((d) => !ids.includes(d.id));
+        setArchivedDocs(next);
+        setSelected(new Set());
+        setConfirmDelete(null);
+        showToast(`${docs.length} document${docs.length > 1 ? 's' : ''} permanently deleted`, 'error');
+      } catch {
+        showToast('Failed to delete selected documents', 'error');
+      }
+    })();
   };
 
   if (viewerDoc) {
@@ -126,6 +158,16 @@ export default function ArchivedDocumentsPage() {
           </div>
         </div>
       </div>
+      {loading && (
+        <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-500 mb-4">
+          Loading archived documents...
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 mb-4">
+          {error}
+        </div>
+      )}
 
       {/* Info banner */}
       <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200 mb-5">

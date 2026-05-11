@@ -1,7 +1,7 @@
 "use client";
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const kpis = [
   { label: 'Total Organizations', value: '84', delta: '+6 this month', icon: 'ri-building-2-line', iconColorClass: 'text-[#0097B2]', iconBgClass: 'bg-[#0097B2]/10' },
@@ -63,7 +63,34 @@ const totalPlanCount = planDistribution.reduce((a, p) => a + p.count, 0);
 
 export default function SuperAdminDashboard() {
   const [activeChart, setActiveChart] = useState<'growth' | 'revenue'>('growth');
+  const [dashboardSummary, setDashboardSummary] = useState<{
+    kpis: typeof kpis;
+    topupStats: typeof topupStats;
+    recentActivity: typeof recentActivity;
+  } | null>(null);
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  const kpisToRender = dashboardSummary?.kpis ?? kpis;
+  const topupStatsToRender = dashboardSummary?.topupStats ?? topupStats;
+  const recentActivityToRender = dashboardSummary?.recentActivity ?? recentActivity;
+
+  useEffect(() => {
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+
+    fetch(`${API_BASE_URL}/super-admin/dashboard`, {
+      method: 'GET',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Dashboard API failed (${res.status})`);
+        return res.json();
+      })
+      .then((data) => setDashboardSummary(data))
+      .catch(() => {
+        // Keep fallbacks if dashboard API fails (e.g., not logged in yet).
+      });
+  }, []);
 
   return (
     <div className="p-4 sm:p-6 space-y-6">
@@ -84,7 +111,7 @@ export default function SuperAdminDashboard() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpis.map((k) => (
+        {kpisToRender.map((k) => (
           <div key={k.label} className="bg-white rounded-xl border border-brand-border p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-brand-muted">{k.label}</span>
@@ -100,7 +127,7 @@ export default function SuperAdminDashboard() {
 
       {/* Top-Up Stats */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {topupStats.map((s) => (
+        {topupStatsToRender.map((s) => (
           <div key={s.label} className="bg-white rounded-xl border border-brand-border p-4 flex items-center gap-4">
             <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${s.iconBgClass}`}>
               <i className={`${s.icon} text-xl ${s.iconColorClass}`} />
@@ -167,7 +194,7 @@ export default function SuperAdminDashboard() {
             <Link href="/super-admin/activity-logs" className="text-xs text-[#0097B2] hover:underline">View all →</Link>
           </div>
           <div className="space-y-4">
-            {recentActivity.map((a, i) => (
+            {recentActivityToRender.map((a, i) => (
               <div key={i} className="flex items-start gap-3">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${a.iconBgClass}`}>
                   <i className={`${a.icon} text-sm ${a.iconColorClass}`} />

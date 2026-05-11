@@ -6,9 +6,9 @@ import Link from 'next/link';
 const TEAL = '#0097B2';
 
 const statsCards = [
-  { label: 'My Uploads', value: '142', icon: 'ri-file-upload-line', color: TEAL, change: '+4 this week' },
-  { label: 'Shared With Me', value: '38', icon: 'ri-share-line', color: '#16a34a', change: '2 new today' },
-  { label: 'Recent Views', value: '21', icon: 'ri-eye-line', color: '#d97706', change: 'Last 7 days' },
+  { label: 'My Uploads', value: '142', icon: 'ri-file-upload-line', color: TEAL, change: '+4 this week', isStorage: false },
+  { label: 'Shared With Me', value: '38', icon: 'ri-share-line', color: '#16a34a', change: '2 new today', isStorage: false },
+  { label: 'Recent Views', value: '21', icon: 'ri-eye-line', color: '#d97706', change: 'Last 7 days', isStorage: false },
   { label: 'Storage Used', value: '64%', icon: 'ri-hard-drive-2-line', color: '#ef4444', isStorage: true, used: 3.2, total: 5 },
 ];
 

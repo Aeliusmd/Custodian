@@ -12,36 +12,25 @@ interface Props {
   onOpenVersionHistory?: () => void;
 }
 
-const MOCK_CONTENT_PAGES = [
-  {
-    title: 'Executive Summary',
-    body: `This document provides a comprehensive overview of the organization's performance and strategic direction. The findings presented herein are based on thorough analysis conducted by our internal teams in collaboration with external auditors and consultants.\n\nKey highlights include a 23% increase in operational efficiency, successful completion of three major milestones, and a projected growth trajectory of 18% for the upcoming fiscal year. The board has reviewed and approved all recommendations contained within this report.`,
-  },
-  {
-    title: 'Section 1 – Overview',
-    body: `The organization has demonstrated consistent growth across all key performance indicators during the reporting period. Revenue streams have diversified significantly, with digital channels now accounting for 42% of total income — up from 31% in the previous period.\n\nOperational costs have been optimized through strategic vendor consolidation and process automation initiatives. The workforce has grown by 12%, with significant investment in talent development programs that have yielded measurable improvements in productivity and employee satisfaction scores.`,
-  },
-  {
-    title: 'Section 2 – Detailed Analysis',
-    body: `A granular breakdown of departmental performance reveals that the Finance and Technology divisions have exceeded their targets by 15% and 22% respectively. The Legal and Compliance team successfully navigated three regulatory changes with zero penalties or violations recorded.\n\nRisk management frameworks have been updated to reflect the evolving threat landscape. Cybersecurity investments totaling $2.4M have been deployed, resulting in a 67% reduction in security incidents compared to the prior year. Business continuity plans have been tested and validated across all critical systems.`,
-  },
-  {
-    title: 'Section 3 – Recommendations',
-    body: `Based on the analysis presented in the preceding sections, the following strategic recommendations are proposed for the next fiscal year:\n\n1. Accelerate digital transformation initiatives with a focus on AI-assisted document processing\n2. Expand the compliance monitoring framework to cover emerging regulatory requirements\n3. Invest in cross-departmental collaboration tools to reduce information silos\n4. Establish a dedicated innovation lab to prototype next-generation service offerings\n5. Strengthen vendor due diligence processes to mitigate supply chain risks`,
-  },
-  {
-    title: 'Appendix & References',
-    body: `All data presented in this document has been sourced from verified internal systems and cross-referenced with external benchmarks where applicable. Financial figures are presented in accordance with IFRS standards and have been independently audited.\n\nReferences:\n- Internal Performance Dashboard Q4 2024\n- External Audit Report by Torres & Associates\n- Industry Benchmark Study 2024 (Global Management Institute)\n- Regulatory Compliance Framework v3.1 (Internal Policy Document)\n- Board Resolution #2024-47 dated November 28, 2024`,
-  },
-];
-
 export default function DocumentViewerModal({ doc, version, onClose, onOpenVersionHistory }: Props) {
   const [currentPage, setCurrentPage] = useState(0);
   const [zoom, setZoom] = useState(100);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  const displayVersion = version ?? doc.versions.find((v) => v.isCurrent) ?? doc.versions[0];
-  const totalPages = MOCK_CONTENT_PAGES.length;
+  const fallbackVersion: DocumentVersion = {
+    id: `${doc.id}-v0`,
+    versionName: 'v1.0',
+    date: doc.lastUpdated || doc.uploadDate || '',
+    uploadedBy: doc.uploadedBy || 'Unknown',
+    isCurrent: true,
+  };
+  const displayVersion = version ?? doc.versions.find((v) => v.isCurrent) ?? doc.versions[0] ?? fallbackVersion;
+  const realContentBlocks = (doc.contentSnippet ?? '')
+    .split('\n\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const pageContent = realContentBlocks.length > 0 ? realContentBlocks : ['No preview content available yet for this document.'];
+  const totalPages = pageContent.length;
 
   const handleZoomIn = () => setZoom((z) => Math.min(z + 10, 150));
   const handleZoomOut = () => setZoom((z) => Math.max(z - 10, 60));
@@ -187,7 +176,7 @@ export default function DocumentViewerModal({ doc, version, onClose, onOpenVersi
               <div className="px-12 pt-10 pb-6 border-b border-gray-100" style={{ background: `${TEAL}08` }}>
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <h1 className="text-xl font-bold text-[#1a2340] leading-tight">{doc.name.replace('.pdf', '')}</h1>
+                    <h1 className="text-xl font-bold text-[#1a2340] leading-tight">{doc.name}</h1>
                     <p className="text-sm text-gray-500 mt-1">{doc.category} · {displayVersion.versionName}</p>
                   </div>
                   <div className="flex-shrink-0 text-right">
@@ -212,33 +201,28 @@ export default function DocumentViewerModal({ doc, version, onClose, onOpenVersi
               <div className="px-12 py-8">
                 <div className="mb-6">
                   <h2 className="text-base font-bold text-[#1a2340] mb-1 pb-2 border-b border-gray-100">
-                    {MOCK_CONTENT_PAGES[currentPage].title}
+                    {realContentBlocks.length > 0 ? `Preview Section ${currentPage + 1}` : 'Document Overview'}
                   </h2>
                 </div>
                 <div className="space-y-4">
-                  {MOCK_CONTENT_PAGES[currentPage].body.split('\n\n').map((para, i) => (
+                  {pageContent[currentPage].split('\n\n').map((para, i) => (
                     <p key={i} className="text-sm text-gray-700 leading-relaxed">{para}</p>
                   ))}
                 </div>
-
-                {/* Decorative lines */}
-                <div className="mt-8 space-y-2.5">
-                  {[100, 95, 88, 100, 72, 90, 60].map((w, i) => (
-                    <div key={i} className="h-2 rounded-full bg-gray-100" style={{ width: `${w}%` }} />
-                  ))}
-                </div>
-                <div className="mt-6 grid grid-cols-2 gap-4">
-                  <div className="h-24 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center">
-                    <i className="ri-bar-chart-2-line text-2xl text-gray-200" />
+                <div className="mt-8 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Document Details</h3>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="text-gray-500">Visibility</div>
+                    <div className="text-[#1a2340] font-medium">{doc.visibility}</div>
+                    <div className="text-gray-500">Upload Date</div>
+                    <div className="text-[#1a2340] font-medium">{doc.uploadDate}</div>
+                    <div className="text-gray-500">Last Updated</div>
+                    <div className="text-[#1a2340] font-medium">{doc.lastUpdated}</div>
+                    <div className="text-gray-500">File Type</div>
+                    <div className="text-[#1a2340] font-medium">{doc.fileType}</div>
+                    <div className="text-gray-500">File Size</div>
+                    <div className="text-[#1a2340] font-medium">{doc.fileSize}</div>
                   </div>
-                  <div className="h-24 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center">
-                    <i className="ri-pie-chart-2-line text-2xl text-gray-200" />
-                  </div>
-                </div>
-                <div className="mt-4 space-y-2.5">
-                  {[85, 100, 78, 92].map((w, i) => (
-                    <div key={i} className="h-2 rounded-full bg-gray-100" style={{ width: `${w}%` }} />
-                  ))}
                 </div>
               </div>
 
@@ -258,7 +242,7 @@ export default function DocumentViewerModal({ doc, version, onClose, onOpenVersi
               <p className="text-xs font-semibold text-white/50 uppercase tracking-wider">Document Outline</p>
             </div>
             <div className="flex-1 overflow-y-auto py-2">
-              {MOCK_CONTENT_PAGES.map((page, idx) => (
+              {pageContent.map((_, idx) => (
                 <button
                   key={idx}
                   onClick={() => setCurrentPage(idx)}
@@ -275,7 +259,7 @@ export default function DocumentViewerModal({ doc, version, onClose, onOpenVersi
                   >
                     Page {idx + 1}
                   </span>
-                  {page.title}
+                  {realContentBlocks.length > 0 ? `Preview Section ${idx + 1}` : 'Document Overview'}
                 </button>
               ))}
             </div>
@@ -310,7 +294,7 @@ export default function DocumentViewerModal({ doc, version, onClose, onOpenVersi
 
       {/* Bottom page thumbnails */}
       <div className="flex items-center gap-2 px-6 py-3 bg-[#1a2340] border-t border-white/10 overflow-x-auto flex-shrink-0">
-        {MOCK_CONTENT_PAGES.map((page, idx) => (
+        {pageContent.map((_, idx) => (
           <button
             key={idx}
             onClick={() => setCurrentPage(idx)}
