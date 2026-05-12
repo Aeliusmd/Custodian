@@ -624,7 +624,92 @@ export const superAdminModel = {
       };
     });
 
-    return { kpis, topupStats, recentActivity };
+    // Top 5 organizations by doc usage
+    const [topOrgRows] = await dbPool.query(
+      `SELECT o.id, o.name, o.status, o.doc_pages_used, o.doc_pages_limit,
+              COALESCE(p.name, 'No Plan') AS plan_name,
+              COALESCE(p.plan_type, '') AS plan_type,
+              COALESCE((
+                SELECT SUM(pp.price)
+                FROM org_plan_subscriptions ops2
+                JOIN plans pp ON pp.id = ops2.plan_id
+                WHERE ops2.org_id = o.id AND ops2.status = 'active'
+                LIMIT 1
+              ), 0) AS monthly_revenue
+         FROM organizations o
+         LEFT JOIN (
+           SELECT org_id, MAX(start_date) AS latest_start
+           FROM org_plan_subscriptions
+           GROUP BY org_id
+         ) latest ON latest.org_id = o.id
+         LEFT JOIN org_plan_subscriptions ops ON ops.org_id = latest.org_id AND ops.start_date = latest.latest_start
+         LEFT JOIN plans p ON p.id = ops.plan_id
+        WHERE o.is_deleted = 0
+        ORDER BY o.doc_pages_used DESC
+        LIMIT 5`,
+    );
+    const topOrgs: SuperAdminDashboardSummary["topOrgs"] = (topOrgRows as Array<{
+      id: string;
+      name: string;
+      status: string;
+      doc_pages_used: number;
+      doc_pages_limit: number;
+      plan_name: string;
+      plan_type: string;
+      monthly_revenue: number;
+    }>).map((row) => ({
+      name: row.name,
+      plan: row.plan_name,
+      revenue: formatMoney(Number(row.monthly_revenue ?? 0)),
+      status: row.status.toLowerCase() === "inactive" ? "Inactive" : "Active",
+      docs: `${Number(row.doc_pages_used ?? 0).toLocaleString()} / ${Number(row.doc_pages_limit ?? 0).toLocaleString()}`,
+    }));
+
+    // Plan distribution: count orgs per plan name
+    const [planDistRows] = await dbPool.query(
+      `SELECT COALESCE(p.name, 'No Plan') AS plan_label, COUNT(DISTINCT o.id) AS cnt
+         FROM organizations o
+         LEFT JOIN (
+           SELECT org_id, MAX(start_date) AS latest_start
+           FROM org_plan_subscriptions
+           GROUP BY org_id
+         ) latest ON latest.org_id = o.id
+         LEFT JOIN org_plan_subscriptions ops ON ops.org_id = latest.org_id AND ops.start_date = latest.latest_start
+         LEFT JOIN plans p ON p.id = ops.plan_id
+        WHERE o.is_deleted = 0
+        GROUP BY p.name
+        ORDER BY cnt DESC
+        LIMIT 8`,
+    );
+    const planDistribution: SuperAdminDashboardSummary["planDistribution"] = (planDistRows as Array<{
+      plan_label: string;
+      cnt: number;
+    }>).map((row) => ({
+      label: row.plan_label,
+      count: Number(row.cnt ?? 0),
+    }));
+
+    // Org growth: count of orgs created per month for last 6 months
+    const [growthRows] = await dbPool.query(
+      `SELECT DATE_FORMAT(created_at, '%b') AS month_label,
+              DATE_FORMAT(created_at, '%Y-%m') AS month_key,
+              COUNT(*) AS cnt
+         FROM organizations
+        WHERE is_deleted = 0
+          AND created_at >= DATE_SUB(CURDATE(), INTERVAL 5 MONTH)
+        GROUP BY month_key, month_label
+        ORDER BY month_key ASC`,
+    );
+    const orgGrowth: SuperAdminDashboardSummary["orgGrowth"] = (growthRows as Array<{
+      month_label: string;
+      month_key: string;
+      cnt: number;
+    }>).map((row) => ({
+      month: row.month_label,
+      count: Number(row.cnt ?? 0),
+    }));
+
+    return { kpis, topupStats, recentActivity, topOrgs, planDistribution, orgGrowth };
   },
   async listOrganizationsFromDb(query: {
     search: string | undefined;

@@ -1,20 +1,36 @@
 "use client";
 
-import { useState, type ReactElement } from 'react';
-import { MOCK_DOCUMENTS, MOCK_CATEGORIES, type DocumentRecord } from '@/mocks/documents';
+import { useState, useEffect, useCallback, type ReactElement } from 'react';
 
 const TEAL = '#0097B2';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
 
-const DYNAMIC_METADATA_FIELDS: Record<string, string[]> = {
-  'Financial Reports': ['Author', 'Report Year', 'Department', 'Approval Status'],
-  'HR Documents': ['Author', 'Version', 'Department', 'Effective Date'],
-  'Legal': ['Author', 'NIC', 'Quarter', 'Audit Firm'],
-  'Strategy': ['Author', 'Year', 'Product Team', 'Confidentiality'],
-  'Contracts': ['Author', 'Document Type', 'Version', 'Valid From'],
-  'IT & Security': ['Author', 'NIC', 'Policy Year', 'Department', 'Review Date'],
-  'Governance': ['Author', 'Meeting Date', 'Meeting Type', 'Attendees'],
-  'Marketing': ['Author', 'Quarter', 'Budget', 'Campaign Theme'],
-};
+interface CategoryField {
+  id: string;
+  name: string;
+  type: string;
+  required: boolean;
+  options?: string[];
+}
+
+interface Category {
+  id: string;
+  name: string;
+  fields: CategoryField[];
+}
+
+interface DocumentRecord {
+  id: string;
+  name: string;
+  category: string;
+  uploadedBy: string;
+  visibility: 'Public' | 'Private';
+  uploadDate: string;
+  lastUpdated: string;
+  fileSize: string;
+  fileType: string;
+  metadata: Record<string, string>;
+}
 
 interface SearchFilters {
   docName: string;
@@ -43,6 +59,9 @@ function highlightText(text: string, keyword: string): ReactElement {
 }
 
 export default function AdvancedSearchPage() {
+  const [allDocs, setAllDocs] = useState<DocumentRecord[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(true);
   const [filters, setFilters] = useState<SearchFilters>({
     docName: '', category: '', docType: 'All', dateFrom: '', dateTo: '', keyword: '', metadata: {},
   });
@@ -51,23 +70,40 @@ export default function AdvancedSearchPage() {
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [expandedFilters, setExpandedFilters] = useState(true);
 
-  const metaFields = filters.category ? (DYNAMIC_METADATA_FIELDS[filters.category] ?? []) : [];
+  const loadData = useCallback(async () => {
+    try {
+      setLoadingDocs(true);
+      const [docsRes, catsRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/protected/user/documents`, { credentials: 'include' }),
+        fetch(`${API_BASE_URL}/protected/user/categories`, { credentials: 'include' }),
+      ]);
+      if (docsRes.ok) setAllDocs(await docsRes.json() as DocumentRecord[]);
+      if (catsRes.ok) setCategories(await catsRes.json() as Category[]);
+    } catch {
+      // silently fail; user will see empty results
+    } finally {
+      setLoadingDocs(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadData(); }, [loadData]);
+
+  const selectedCat = categories.find((c) => c.name === filters.category);
+  const metaFields = selectedCat?.fields.map((f) => f.name) ?? [];
 
   const handleSearch = () => {
-    const found = MOCK_DOCUMENTS.filter((d) => {
+    const found = allDocs.filter((d) => {
       if (filters.docName && !d.name.toLowerCase().includes(filters.docName.toLowerCase())) return false;
       if (filters.category && d.category !== filters.category) return false;
       if (filters.docType !== 'All' && d.visibility !== filters.docType) return false;
       if (filters.dateFrom && d.uploadDate < filters.dateFrom) return false;
       if (filters.dateTo && d.uploadDate > filters.dateTo) return false;
-      // Keyword search across name, category, metadata values, and content snippet
       if (filters.keyword.trim()) {
         const kw = filters.keyword.toLowerCase();
         const inName = d.name.toLowerCase().includes(kw);
         const inCategory = d.category.toLowerCase().includes(kw);
         const inMeta = Object.values(d.metadata ?? {}).some((v) => v?.toLowerCase().includes(kw));
-        const inContent = d.contentSnippet?.toLowerCase().includes(kw) ?? false;
-        if (!inName && !inCategory && !inMeta && !inContent) return false;
+        if (!inName && !inCategory && !inMeta) return false;
       }
       for (const [key, val] of Object.entries(filters.metadata)) {
         if (val && d.metadata[key] && !d.metadata[key].toLowerCase().includes(val.toLowerCase())) return false;
@@ -99,6 +135,8 @@ export default function AdvancedSearchPage() {
     ...Object.values(filters.metadata).filter(Boolean),
   ].filter(Boolean).length;
 
+  const categoryNames = categories.map((c) => c.name);
+
   return (
     <div className="px-4 py-5 sm:p-6 min-h-full font-inter" onClick={() => setActiveMenu(null)}>
       {/* Header */}
@@ -129,13 +167,13 @@ export default function AdvancedSearchPage() {
           <h3 className="text-sm font-bold text-[#1a2340] mb-4 flex items-center gap-2">
             <i className="ri-filter-3-line" style={{ color: TEAL }} />
             Search Filters
+            {loadingDocs && <span className="text-xs text-gray-400 font-normal ml-1">(loading documents...)</span>}
           </h3>
 
-          {/* Keyword search — full width, prominent */}
           <div className="mb-4">
             <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
               Keyword Search
-              <span className="ml-2 normal-case font-normal text-gray-300">(searches document name, content, metadata)</span>
+              <span className="ml-2 normal-case font-normal text-gray-300">(searches document name, category, metadata)</span>
             </label>
             <div className="relative">
               <i className="ri-search-line absolute left-4 top-1/2 -translate-y-1/2 text-gray-300 text-base" />
@@ -147,10 +185,7 @@ export default function AdvancedSearchPage() {
                 className="w-full border border-gray-200 rounded-xl pl-10 pr-4 py-2.5 text-sm text-[#1a2340] outline-none focus:border-[#0097B2] transition-all"
               />
               {filters.keyword && (
-                <button
-                  onClick={() => setFilters((prev) => ({ ...prev, keyword: '' }))}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 cursor-pointer"
-                >
+                <button onClick={() => setFilters((prev) => ({ ...prev, keyword: '' }))} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 cursor-pointer">
                   <i className="ri-close-line" />
                 </button>
               )}
@@ -158,7 +193,6 @@ export default function AdvancedSearchPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            {/* Document Name */}
             <div>
               <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Document Name</label>
               <input
@@ -168,8 +202,6 @@ export default function AdvancedSearchPage() {
                 className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-[#1a2340] outline-none focus:border-[#0097B2] transition-all"
               />
             </div>
-
-            {/* Category */}
             <div>
               <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Category</label>
               <select
@@ -178,11 +210,9 @@ export default function AdvancedSearchPage() {
                 className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-gray-600 outline-none focus:border-[#0097B2] bg-white cursor-pointer transition-all"
               >
                 <option value="">All Categories</option>
-                {MOCK_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                {categoryNames.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-
-            {/* Document Type — replaces Uploaded By */}
             <div>
               <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Document Type</label>
               <div className="flex gap-2">
@@ -193,45 +223,26 @@ export default function AdvancedSearchPage() {
                       key={type}
                       type="button"
                       onClick={() => setFilters((prev) => ({ ...prev, docType: type }))}
-                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border text-sm font-medium transition-all cursor-pointer ${
-                        active ? 'text-white border-transparent' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
-                      }`}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border text-sm font-medium transition-all cursor-pointer ${active ? 'text-white border-transparent' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
                       style={active ? { background: TEAL, borderColor: TEAL } : {}}
                     >
-                      <i className={
-                        type === 'All' ? 'ri-files-line' :
-                        type === 'Public' ? 'ri-global-line' :
-                        'ri-lock-line'
-                      } />
+                      <i className={type === 'All' ? 'ri-files-line' : type === 'Public' ? 'ri-global-line' : 'ri-lock-line'} />
                       {type}
                     </button>
                   );
                 })}
               </div>
             </div>
-
-            {/* Date Range */}
             <div>
               <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Date Range</label>
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-2 sm:items-center">
-                <input
-                  type="date"
-                  value={filters.dateFrom}
-                  onChange={(e) => setFilters((prev) => ({ ...prev, dateFrom: e.target.value }))}
-                  className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-600 outline-none focus:border-[#0097B2] bg-white cursor-pointer transition-all"
-                />
+                <input type="date" value={filters.dateFrom} onChange={(e) => setFilters((prev) => ({ ...prev, dateFrom: e.target.value }))} className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-600 outline-none focus:border-[#0097B2] bg-white cursor-pointer transition-all" />
                 <span className="text-gray-300 text-xs flex-shrink-0 justify-self-center">to</span>
-                <input
-                  type="date"
-                  value={filters.dateTo}
-                  onChange={(e) => setFilters((prev) => ({ ...prev, dateTo: e.target.value }))}
-                  className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-600 outline-none focus:border-[#0097B2] bg-white cursor-pointer transition-all"
-                />
+                <input type="date" value={filters.dateTo} onChange={(e) => setFilters((prev) => ({ ...prev, dateTo: e.target.value }))} className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-600 outline-none focus:border-[#0097B2] bg-white cursor-pointer transition-all" />
               </div>
             </div>
           </div>
 
-          {/* Dynamic Metadata Fields */}
           {metaFields.length > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-3">
@@ -258,24 +269,12 @@ export default function AdvancedSearchPage() {
             </div>
           )}
 
-          {/* Actions */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between mt-6 pt-4 border-t border-gray-100 gap-3">
-            <button
-              onClick={handleReset}
-              type="button"
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-500 hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <i className="ri-refresh-line" />
-              Reset All
+            <button onClick={handleReset} type="button" className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-500 hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap">
+              <i className="ri-refresh-line" /> Reset All
             </button>
-            <button
-              onClick={handleSearch}
-              type="button"
-              className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
-              style={{ background: TEAL }}
-            >
-              <i className="ri-search-line" />
-              Search Documents
+            <button onClick={handleSearch} type="button" disabled={loadingDocs} className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap disabled:opacity-60" style={{ background: TEAL }}>
+              <i className="ri-search-line" /> Search Documents
             </button>
           </div>
         </div>
@@ -319,86 +318,62 @@ export default function AdvancedSearchPage() {
                       <th className="px-5 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Category</th>
                       <th className="px-5 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Document Type</th>
                       <th className="px-5 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Upload Date</th>
-                      {filters.keyword && (
-                        <th className="px-5 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Match</th>
-                      )}
                       <th className="px-5 py-3.5 w-10" />
                     </tr>
                   </thead>
                   <tbody>
-                    {results.map((doc) => {
-                      const kw = filters.keyword.trim();
-                      const matchInContent = kw && doc.contentSnippet?.toLowerCase().includes(kw.toLowerCase());
-
-                      return (
-                        <tr key={doc.id} className="border-b border-gray-50 last:border-0 hover:bg-[#0097B2]/[0.03] transition-all">
-                          <td className="px-5 py-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${TEAL}15` }}>
-                                <i className="ri-file-pdf-2-line text-sm" style={{ color: TEAL }} />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="text-sm font-medium text-[#1a2340] truncate max-w-[220px]">
-                                  {highlightText(doc.name, filters.keyword)}
-                                </div>
-                                <div className="text-xs text-gray-400">{doc.fileSize} · {doc.fileType}</div>
-                              </div>
+                    {results.map((doc) => (
+                      <tr key={doc.id} className="border-b border-gray-50 last:border-0 hover:bg-[#0097B2]/[0.03] transition-all">
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${TEAL}15` }}>
+                              <i className="ri-file-pdf-2-line text-sm" style={{ color: TEAL }} />
                             </div>
-                          </td>
-                          <td className="px-5 py-4">
-                            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
-                              {highlightText(doc.category, filters.keyword)}
-                            </span>
-                          </td>
-                          <td className="px-5 py-4">
-                            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${doc.visibility === 'Public' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                              <i className={`mr-1 ${doc.visibility === 'Public' ? 'ri-global-line' : 'ri-lock-line'}`} />
-                              {doc.visibility}
-                            </span>
-                          </td>
-                          <td className="px-5 py-4 text-sm text-gray-500 whitespace-nowrap">{doc.uploadDate}</td>
-                          {filters.keyword && (
-                            <td className="px-5 py-4">
-                              {matchInContent ? (
-                                <div className="max-w-[200px]">
-                                  <p className="text-xs text-gray-400 italic leading-relaxed line-clamp-2">
-                                    &ldquo;{highlightText(doc.contentSnippet ?? '', filters.keyword)}&rdquo;
-                                  </p>
-                                </div>
-                              ) : (
-                                <span className="text-xs text-gray-300">—</span>
-                              )}
-                            </td>
-                          )}
-                          <td className="px-5 py-4">
-                            <div className="relative" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                onClick={() => setActiveMenu(activeMenu === doc.id ? null : doc.id)}
-                                className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all cursor-pointer ${activeMenu === doc.id ? 'bg-[#0097B2]/10 text-[#0097B2]' : 'text-gray-400 hover:bg-gray-100 hover:text-[#1a2340]'}`}
-                              >
-                                <i className="ri-more-2-fill text-base" />
-                              </button>
-                              {activeMenu === doc.id && (
-                                <div className="absolute right-0 top-10 w-48 bg-white border border-gray-200 rounded-xl overflow-hidden z-40 py-1.5">
-                                  <button type="button" className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer">
-                                    <i className="ri-eye-line text-sm" />
-                                    <span>View Document</span>
-                                  </button>
-                                  <button type="button" className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer">
-                                    <i className="ri-download-2-line text-sm" />
-                                    <span>Download PDF</span>
-                                  </button>
-                                  <button type="button" className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer">
-                                    <i className="ri-share-forward-line text-sm" />
-                                    <span>Share</span>
-                                  </button>
-                                </div>
-                              )}
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-[#1a2340] truncate max-w-[220px]">
+                                {highlightText(doc.name, filters.keyword)}
+                              </div>
+                              <div className="text-xs text-gray-400">{doc.fileSize} · {doc.fileType}</div>
                             </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                          </div>
+                        </td>
+                        <td className="px-5 py-4">
+                          <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
+                            {highlightText(doc.category, filters.keyword)}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4">
+                          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${doc.visibility === 'Public' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                            <i className={`mr-1 ${doc.visibility === 'Public' ? 'ri-global-line' : 'ri-lock-line'}`} />
+                            {doc.visibility}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 text-sm text-gray-500 whitespace-nowrap">{doc.uploadDate}</td>
+                        <td className="px-5 py-4">
+                          <div className="relative" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => setActiveMenu(activeMenu === doc.id ? null : doc.id)}
+                              className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all cursor-pointer ${activeMenu === doc.id ? 'bg-[#0097B2]/10 text-[#0097B2]' : 'text-gray-400 hover:bg-gray-100 hover:text-[#1a2340]'}`}
+                            >
+                              <i className="ri-more-2-fill text-base" />
+                            </button>
+                            {activeMenu === doc.id && (
+                              <div className="absolute right-0 top-10 w-48 bg-white border border-gray-200 rounded-xl overflow-hidden z-40 py-1.5">
+                                <button type="button" className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer">
+                                  <i className="ri-eye-line text-sm" /><span>View Document</span>
+                                </button>
+                                <button type="button" className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer">
+                                  <i className="ri-download-2-line text-sm" /><span>Download</span>
+                                </button>
+                                <button type="button" className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer">
+                                  <i className="ri-share-forward-line text-sm" /><span>Share</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>

@@ -1,8 +1,19 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 const TEAL = '#0097B2';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+
+interface UserProfile {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  language: string;
+  role: string;
+  bio: string;
+}
 
 interface Toast {
   id: number;
@@ -11,18 +22,19 @@ interface Toast {
 }
 
 export default function UserProfilePage() {
-  const [firstName, setFirstName] = useState('Alex');
-  const [lastName, setLastName] = useState('Harrison');
-  const [email, setEmail] = useState('alex.harrison@acmecorp.com');
-  const [phone, setPhone] = useState('+1 (555) 234-5678');
-  const [language, setLanguage] = useState('English');
-  const [bio, setBio] = useState('Document specialist responsible for managing and organizing company files across legal, financial and compliance categories.');
+  const [profile, setProfile] = useState<UserProfile>({
+    firstName: '', lastName: '', email: '', phone: '', language: 'English', role: 'USER', bio: '',
+  });
+  const [original, setOriginal] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
 
   const [currentPass, setCurrentPass] = useState('');
   const [newPass, setNewPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
   const [passErrors, setPassErrors] = useState<Record<string, string>>({});
+  const [changingPass, setChangingPass] = useState(false);
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -35,26 +47,60 @@ export default function UserProfilePage() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3500);
   };
 
-  const handleProfileSave = () => {
+  const loadProfile = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE_URL}/user/settings/profile`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to load profile');
+      const data = await res.json() as UserProfile;
+      setProfile(data);
+      setOriginal(data);
+    } catch {
+      showToast('Failed to load profile', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadProfile(); }, [loadProfile]);
+
+  const handleProfileSave = async () => {
     const e: Record<string, string> = {};
-    if (!firstName.trim()) e.firstName = 'First name is required';
-    if (!lastName.trim()) e.lastName = 'Last name is required';
-    if (!email.trim()) e.email = 'Email is required';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) e.email = 'Invalid email address';
+    if (!profile.firstName.trim()) e.firstName = 'First name is required';
+    if (!profile.lastName.trim()) e.lastName = 'Last name is required';
+    if (!profile.email.trim()) e.email = 'Email is required';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email)) e.email = 'Invalid email address';
     setProfileErrors(e);
-    if (Object.keys(e).length === 0) showToast('Profile updated successfully');
+    if (Object.keys(e).length > 0) return;
+
+    try {
+      setSaving(true);
+      const res = await fetch(`${API_BASE_URL}/user/settings/profile`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profile),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { message?: string };
+        throw new Error(body.message ?? 'Failed to save profile');
+      }
+      const updated = await res.json() as UserProfile;
+      setProfile(updated);
+      setOriginal(updated);
+      showToast('Profile updated successfully');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to save profile', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleCancel = () => {
-    setFirstName('Alex');
-    setLastName('Harrison');
-    setEmail('alex.harrison@acmecorp.com');
-    setPhone('+1 (555) 234-5678');
-    setBio('Document specialist responsible for managing and organizing company files across legal, financial and compliance categories.');
-    setProfileErrors({});
+    if (original) { setProfile(original); setProfileErrors({}); }
   };
 
-  const handlePasswordChange = () => {
+  const handlePasswordChange = async () => {
     const e: Record<string, string> = {};
     if (!currentPass) e.currentPass = 'Current password is required';
     if (!newPass) e.newPass = 'New password is required';
@@ -62,11 +108,26 @@ export default function UserProfilePage() {
     if (!confirmPass) e.confirmPass = 'Please confirm your password';
     else if (newPass !== confirmPass) e.confirmPass = 'Passwords do not match';
     setPassErrors(e);
-    if (Object.keys(e).length === 0) {
-      setCurrentPass('');
-      setNewPass('');
-      setConfirmPass('');
+    if (Object.keys(e).length > 0) return;
+
+    try {
+      setChangingPass(true);
+      const res = await fetch(`${API_BASE_URL}/user/settings/change-password`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: currentPass, newPassword: newPass, confirmPassword: confirmPass }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { message?: string };
+        throw new Error(body.message ?? 'Failed to change password');
+      }
+      setCurrentPass(''); setNewPass(''); setConfirmPass('');
       showToast('Password changed successfully');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to change password', 'error');
+    } finally {
+      setChangingPass(false);
     }
   };
 
@@ -81,7 +142,19 @@ export default function UserProfilePage() {
     return { label: 'Fair', color: 'bg-amber-400', width: 'w-2/4' };
   })();
 
-  const initials = `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase() || 'AH';
+  const initials = `${profile.firstName.charAt(0)}${profile.lastName.charAt(0)}`.toUpperCase() || '??';
+
+  if (loading) {
+    return (
+      <div className="p-8 font-inter min-h-full">
+        <div className="max-w-3xl space-y-6 animate-pulse">
+          <div className="h-6 bg-gray-100 rounded w-40 mb-2" />
+          <div className="bg-white rounded-2xl border border-gray-200 p-6 h-28" />
+          <div className="bg-white rounded-2xl border border-gray-200 p-6 h-64" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 font-inter min-h-full">
@@ -107,7 +180,7 @@ export default function UserProfilePage() {
             {initials}
           </div>
           <div>
-            <p className="text-base font-bold text-[#1a2340]">{firstName} {lastName}</p>
+            <p className="text-base font-bold text-[#1a2340]">{profile.firstName} {profile.lastName}</p>
             <p className="text-sm mt-0.5 text-amber-600">User</p>
             <button className="text-sm font-semibold mt-1 cursor-pointer hover:underline" style={{ color: TEAL }}>Change Avatar</button>
           </div>
@@ -116,9 +189,7 @@ export default function UserProfilePage() {
         {/* Personal Information */}
         <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
-            <div className="w-5 h-5 flex items-center justify-center">
-              <i className="ri-user-line text-base text-gray-500" />
-            </div>
+            <i className="ri-user-line text-base text-gray-500" />
             <h3 className="text-sm font-bold text-[#1a2340]">Personal Information</h3>
           </div>
           <div className="p-6 space-y-5">
@@ -126,8 +197,8 @@ export default function UserProfilePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">First Name</label>
                 <input
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
+                  value={profile.firstName}
+                  onChange={(e) => setProfile((p) => ({ ...p, firstName: e.target.value }))}
                   className={`w-full border rounded-lg px-3.5 py-2.5 text-sm text-[#1a2340] outline-none transition-all ${profileErrors.firstName ? 'border-red-300 bg-red-50' : 'border-gray-200 focus:border-[#0097B2]'}`}
                   placeholder="First name"
                 />
@@ -136,8 +207,8 @@ export default function UserProfilePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">Last Name</label>
                 <input
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
+                  value={profile.lastName}
+                  onChange={(e) => setProfile((p) => ({ ...p, lastName: e.target.value }))}
                   className={`w-full border rounded-lg px-3.5 py-2.5 text-sm text-[#1a2340] outline-none transition-all ${profileErrors.lastName ? 'border-red-300 bg-red-50' : 'border-gray-200 focus:border-[#0097B2]'}`}
                   placeholder="Last name"
                 />
@@ -149,8 +220,8 @@ export default function UserProfilePage() {
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">Email Address</label>
                 <input
                   type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={profile.email}
+                  onChange={(e) => setProfile((p) => ({ ...p, email: e.target.value }))}
                   className={`w-full border rounded-lg px-3.5 py-2.5 text-sm text-[#1a2340] outline-none transition-all ${profileErrors.email ? 'border-red-300 bg-red-50' : 'border-gray-200 focus:border-[#0097B2]'}`}
                   placeholder="email@example.com"
                 />
@@ -159,8 +230,8 @@ export default function UserProfilePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">Phone Number</label>
                 <input
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  value={profile.phone}
+                  onChange={(e) => setProfile((p) => ({ ...p, phone: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm text-[#1a2340] outline-none focus:border-[#0097B2] transition-all"
                   placeholder="+1 (555) 000-0000"
                 />
@@ -174,8 +245,8 @@ export default function UserProfilePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">Language</label>
                 <select
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
+                  value={profile.language}
+                  onChange={(e) => setProfile((p) => ({ ...p, language: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm text-[#1a2340] outline-none focus:border-[#0097B2] transition-all bg-white cursor-pointer"
                 >
                   <option>English</option>
@@ -189,19 +260,19 @@ export default function UserProfilePage() {
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1.5">Bio / Profile Information</label>
               <textarea
-                value={bio}
-                onChange={(e) => setBio(e.target.value.slice(0, 500))}
+                value={profile.bio}
+                onChange={(e) => setProfile((p) => ({ ...p, bio: e.target.value.slice(0, 500) }))}
                 rows={4}
                 className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm text-[#1a2340] outline-none focus:border-[#0097B2] transition-all resize-none"
                 placeholder="Write a short bio about yourself..."
               />
-              <div className="text-right text-xs text-gray-400 mt-1">{bio.length}/500</div>
+              <div className="text-right text-xs text-gray-400 mt-1">{profile.bio.length}/500</div>
             </div>
             <div className="flex items-center gap-3 pt-1">
-              <button onClick={handleProfileSave} className="px-5 py-2.5 rounded-lg text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap" style={{ background: TEAL }}>
-                Save Changes
+              <button onClick={() => void handleProfileSave()} disabled={saving} className="px-5 py-2.5 rounded-lg text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap disabled:opacity-70" style={{ background: TEAL }}>
+                {saving ? 'Saving...' : 'Save Changes'}
               </button>
-              <button onClick={handleCancel} className="px-5 py-2.5 rounded-lg text-sm font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap">
+              <button onClick={handleCancel} disabled={saving} className="px-5 py-2.5 rounded-lg text-sm font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap">
                 Cancel
               </button>
             </div>
@@ -211,22 +282,14 @@ export default function UserProfilePage() {
         {/* Change Password */}
         <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
-            <div className="w-5 h-5 flex items-center justify-center">
-              <i className="ri-lock-line text-base text-gray-500" />
-            </div>
+            <i className="ri-lock-line text-base text-gray-500" />
             <h3 className="text-sm font-bold text-[#1a2340]">Change Password</h3>
           </div>
           <div className="p-6 space-y-5">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1.5">Current Password</label>
               <div className={`flex items-center border rounded-lg px-3.5 py-2.5 gap-2 transition-all ${passErrors.currentPass ? 'border-red-300 bg-red-50' : 'border-gray-200 focus-within:border-[#0097B2]'}`}>
-                <input
-                  type={showCurrent ? 'text' : 'password'}
-                  value={currentPass}
-                  onChange={(e) => setCurrentPass(e.target.value)}
-                  placeholder="Enter current password"
-                  className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent"
-                />
+                <input type={showCurrent ? 'text' : 'password'} value={currentPass} onChange={(e) => setCurrentPass(e.target.value)} placeholder="Enter current password" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
                 <button type="button" onClick={() => setShowCurrent(!showCurrent)} className="text-gray-400 hover:text-gray-600 cursor-pointer w-4 h-4 flex items-center justify-center">
                   <i className={showCurrent ? 'ri-eye-off-line' : 'ri-eye-line'} />
                 </button>
@@ -237,13 +300,7 @@ export default function UserProfilePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">New Password</label>
                 <div className={`flex items-center border rounded-lg px-3.5 py-2.5 gap-2 transition-all ${passErrors.newPass ? 'border-red-300 bg-red-50' : 'border-gray-200 focus-within:border-[#0097B2]'}`}>
-                  <input
-                    type={showNew ? 'text' : 'password'}
-                    value={newPass}
-                    onChange={(e) => setNewPass(e.target.value)}
-                    placeholder="Min. 8 characters"
-                    className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent"
-                  />
+                  <input type={showNew ? 'text' : 'password'} value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="Min. 8 characters" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
                   <button type="button" onClick={() => setShowNew(!showNew)} className="text-gray-400 hover:text-gray-600 cursor-pointer w-4 h-4 flex items-center justify-center">
                     <i className={showNew ? 'ri-eye-off-line' : 'ri-eye-line'} />
                   </button>
@@ -261,13 +318,7 @@ export default function UserProfilePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">Confirm New Password</label>
                 <div className={`flex items-center border rounded-lg px-3.5 py-2.5 gap-2 transition-all ${passErrors.confirmPass ? 'border-red-300 bg-red-50' : 'border-gray-200 focus-within:border-[#0097B2]'}`}>
-                  <input
-                    type={showConfirm ? 'text' : 'password'}
-                    value={confirmPass}
-                    onChange={(e) => setConfirmPass(e.target.value)}
-                    placeholder="Re-enter new password"
-                    className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent"
-                  />
+                  <input type={showConfirm ? 'text' : 'password'} value={confirmPass} onChange={(e) => setConfirmPass(e.target.value)} placeholder="Re-enter new password" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
                   <button type="button" onClick={() => setShowConfirm(!showConfirm)} className="text-gray-400 hover:text-gray-600 cursor-pointer w-4 h-4 flex items-center justify-center">
                     <i className={showConfirm ? 'ri-eye-off-line' : 'ri-eye-line'} />
                   </button>
@@ -276,13 +327,10 @@ export default function UserProfilePage() {
               </div>
             </div>
             <div className="flex items-center gap-3 pt-1">
-              <button onClick={handlePasswordChange} className="px-5 py-2.5 rounded-lg text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap" style={{ background: TEAL }}>
-                Update Password
+              <button onClick={() => void handlePasswordChange()} disabled={changingPass} className="px-5 py-2.5 rounded-lg text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap disabled:opacity-70" style={{ background: TEAL }}>
+                {changingPass ? 'Updating...' : 'Update Password'}
               </button>
-              <button
-                onClick={() => { setCurrentPass(''); setNewPass(''); setConfirmPass(''); setPassErrors({}); }}
-                className="px-5 py-2.5 rounded-lg text-sm font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap"
-              >
+              <button onClick={() => { setCurrentPass(''); setNewPass(''); setConfirmPass(''); setPassErrors({}); }} disabled={changingPass} className="px-5 py-2.5 rounded-lg text-sm font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap">
                 Cancel
               </button>
             </div>

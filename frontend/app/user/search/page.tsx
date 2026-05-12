@@ -1,9 +1,33 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from 'react';
-import { MOCK_SEARCH_RESULTS, SEARCH_SUGGESTIONS, type SearchResult } from '../../../mocks/searchResults';
+import { useEffect, useRef, useState, useCallback, type KeyboardEvent, type ReactElement } from 'react';
 
 const TEAL = '#0097B2';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+
+interface SearchResult {
+  id: string;
+  documentName: string;
+  snippet: string;
+  category: string;
+  uploadDate: string;
+  uploadedBy: string;
+  keywords: string[];
+}
+
+const CATEGORY_COLORS: Record<string, string> = {
+  'Financial Reports': 'bg-emerald-100 text-emerald-700',
+  'IT & Security': 'bg-purple-100 text-purple-700',
+  'Legal': 'bg-red-100 text-red-700',
+  'Legal Contracts': 'bg-red-100 text-red-700',
+  'HR Documents': 'bg-blue-100 text-blue-700',
+  'Governance': 'bg-amber-100 text-amber-700',
+  'Strategy': 'bg-indigo-100 text-indigo-700',
+  'Contracts': 'bg-orange-100 text-orange-700',
+  'Marketing': 'bg-pink-100 text-pink-700',
+  'Compliance': 'bg-violet-100 text-violet-700',
+  'Operations': 'bg-teal-100 text-teal-700',
+};
 
 function highlightText(text: string, keyword: string): ReactElement {
   if (!keyword.trim()) return <>{text}</>;
@@ -21,50 +45,39 @@ function highlightText(text: string, keyword: string): ReactElement {
   );
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  'Financial Reports': 'bg-emerald-100 text-emerald-700',
-  'IT & Security': 'bg-purple-100 text-purple-700',
-  'Legal': 'bg-red-100 text-red-700',
-  'HR Documents': 'bg-blue-100 text-blue-700',
-  'Governance': 'bg-amber-100 text-amber-700',
-  'Strategy': 'bg-indigo-100 text-indigo-700',
-  'Contracts': 'bg-orange-100 text-orange-700',
-  'Marketing': 'bg-pink-100 text-pink-700',
-};
-
 export default function GlobalSearchPage() {
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [error, setError] = useState('');
   const [selectedDoc, setSelectedDoc] = useState<SearchResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const filteredSuggestions = SEARCH_SUGGESTIONS.filter((s: string) =>
-    query && s.toLowerCase().includes(query.toLowerCase())
-  );
-
-  const doSearch = (q: string) => {
+  const doSearch = useCallback(async (q: string) => {
     if (!q.trim()) return;
     setSubmitted(q);
-    setShowSuggestions(false);
     setIsLoading(true);
     setResults([]);
-    setTimeout(() => {
-      const found = MOCK_SEARCH_RESULTS.filter(
-        (r: SearchResult) =>
-          r.documentName.toLowerCase().includes(q.toLowerCase()) ||
-          r.snippet.toLowerCase().includes(q.toLowerCase()) ||
-          r.category.toLowerCase().includes(q.toLowerCase())
-      );
-      setResults(found);
+    setError('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/protected/user/search?q=${encodeURIComponent(q.trim())}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { message?: string };
+        throw new Error(body.message ?? `Search failed (${res.status})`);
+      }
+      setResults(await res.json() as SearchResult[]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Search failed');
+    } finally {
       setIsLoading(false);
-    }, 800);
-  };
+    }
+  }, []);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') doSearch(query);
+    if (e.key === 'Enter') void doSearch(query);
   };
 
   useEffect(() => {
@@ -72,74 +85,43 @@ export default function GlobalSearchPage() {
   }, []);
 
   return (
-    <div className="px-4 py-5 sm:p-6 min-h-full font-inter" onClick={() => setShowSuggestions(false)}>
+    <div className="px-4 py-5 sm:p-6 min-h-full font-inter">
       {/* Header */}
       <div className="mb-8 flex flex-col gap-1">
         <h1 className="text-xl font-bold text-[#1a2340]">Global Search</h1>
-        <p className="text-sm text-gray-400 mt-0.5">Search inside document content with full-text search</p>
+        <p className="text-sm text-gray-400 mt-0.5">Search documents by name and category</p>
       </div>
 
       {/* Search Bar */}
       <div className="max-w-3xl mx-auto mb-8">
-        <div className="relative" onClick={(e) => e.stopPropagation()}>
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-white border-2 rounded-2xl px-4 sm:px-5 py-4 transition-all focus-within:border-[#0097B2] border-gray-200">
-            <i className="ri-search-2-line text-xl text-gray-400 flex-shrink-0" />
-            <input
-              ref={inputRef}
-              value={query}
-              onChange={(e) => { setQuery(e.target.value); setShowSuggestions(true); }}
-              onKeyDown={handleKeyDown}
-              onFocus={() => setShowSuggestions(true)}
-              placeholder="Search documents by content..."
-              className="flex-1 min-w-0 outline-none text-base text-[#1a2340] bg-transparent placeholder-gray-300"
-            />
-            {query && (
-              <button onClick={() => { setQuery(''); setSubmitted(''); setResults([]); }} aria-label="Clear search" title="Clear search" className="text-gray-300 hover:text-gray-500 cursor-pointer">
-                <i className="ri-close-line text-lg" />
-              </button>
-            )}
-            <button
-              onClick={() => doSearch(query)}
-              className="w-full sm:w-auto px-5 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
-              style={{ background: TEAL }}
-            >
-              Search
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-white border-2 rounded-2xl px-4 sm:px-5 py-4 transition-all focus-within:border-[#0097B2] border-gray-200">
+          <i className="ri-search-2-line text-xl text-gray-400 flex-shrink-0" />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Search documents by name or category..."
+            className="flex-1 min-w-0 outline-none text-base text-[#1a2340] bg-transparent placeholder-gray-300"
+          />
+          {query && (
+            <button onClick={() => { setQuery(''); setSubmitted(''); setResults([]); }} aria-label="Clear search" title="Clear search" className="text-gray-300 hover:text-gray-500 cursor-pointer">
+              <i className="ri-close-line text-lg" />
             </button>
-          </div>
-
-          {/* Suggestions Dropdown */}
-          {showSuggestions && filteredSuggestions.length > 0 && (
-            <div className="absolute top-full mt-2 left-0 right-0 bg-white border border-gray-200 rounded-xl overflow-hidden z-30">
-              {filteredSuggestions.map((s: string, i: number) => (
-                <button
-                  key={i}
-                  onClick={() => { setQuery(s); doSearch(s); }}
-                  className="w-full flex items-center gap-3 px-5 py-3 text-sm text-gray-600 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer text-left"
-                >
-                  <i className="ri-search-line text-gray-300 text-sm flex-shrink-0" />
-                  {highlightText(s, query)}
-                </button>
-              ))}
-            </div>
           )}
+          <button
+            onClick={() => void doSearch(query)}
+            className="w-full sm:w-auto px-5 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
+            style={{ background: TEAL }}
+          >
+            Search
+          </button>
         </div>
-
-        {/* Quick Tags */}
-        {!submitted && (
-          <div className="flex flex-wrap gap-2 mt-3">
-            <span className="text-xs text-gray-400">Try:</span>
-            {SEARCH_SUGGESTIONS.slice(0, 5).map((s: string) => (
-              <button
-                key={s}
-                onClick={() => { setQuery(s); doSearch(s); }}
-                className="text-xs px-3 py-1.5 rounded-full border border-gray-200 text-gray-500 hover:border-[#0097B2] hover:text-[#0097B2] transition-colors cursor-pointer whitespace-nowrap"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
+
+      {error && (
+        <div className="max-w-3xl mx-auto mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+      )}
 
       {/* Loading State */}
       {isLoading && (
@@ -152,7 +134,6 @@ export default function GlobalSearchPage() {
                   <div className="h-4 bg-gray-100 rounded w-1/2" />
                   <div className="h-3 bg-gray-100 rounded w-1/4" />
                   <div className="h-3 bg-gray-100 rounded w-full" />
-                  <div className="h-3 bg-gray-100 rounded w-4/5" />
                 </div>
               </div>
             </div>
@@ -161,13 +142,13 @@ export default function GlobalSearchPage() {
       )}
 
       {/* No Results */}
-      {!isLoading && submitted && results.length === 0 && (
+      {!isLoading && submitted && results.length === 0 && !error && (
         <div className="max-w-3xl mx-auto text-center py-16 px-4">
           <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-4">
             <i className="ri-file-search-line text-2xl text-gray-300" />
           </div>
           <h3 className="text-base font-semibold text-[#1a2340] mb-2">No results found</h3>
-          <p className="text-sm text-gray-400">No documents contain "<strong>{submitted}</strong>". Try a different keyword.</p>
+          <p className="text-sm text-gray-400">No documents found for &ldquo;<strong>{submitted}</strong>&rdquo;. Try a different keyword.</p>
         </div>
       )}
 
@@ -175,7 +156,7 @@ export default function GlobalSearchPage() {
       {!isLoading && results.length > 0 && (
         <div className="max-w-3xl mx-auto">
           <p className="text-sm text-gray-400 mb-4">
-            Found <span className="font-semibold text-[#1a2340]">{results.length}</span> result{results.length !== 1 ? 's' : ''} for <span className="font-semibold text-[#1a2340]">"{submitted}"</span>
+            Found <span className="font-semibold text-[#1a2340]">{results.length}</span> result{results.length !== 1 ? 's' : ''} for <span className="font-semibold text-[#1a2340]">&ldquo;{submitted}&rdquo;</span>
           </p>
           <div className="space-y-4">
             {results.map((result) => (
@@ -197,7 +178,7 @@ export default function GlobalSearchPage() {
                     </div>
                     <div className="flex items-center gap-3 mb-3">
                       <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${CATEGORY_COLORS[result.category] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {result.category}
+                        {highlightText(result.category, submitted)}
                       </span>
                       <span className="text-xs text-gray-400">
                         <i className="ri-calendar-line mr-1" />{result.uploadDate}
@@ -206,9 +187,7 @@ export default function GlobalSearchPage() {
                         <i className="ri-user-line mr-1" />{result.uploadedBy}
                       </span>
                     </div>
-                    <p className="text-sm text-gray-500 leading-relaxed line-clamp-3">
-                      {highlightText(result.snippet, submitted)}
-                    </p>
+                    <p className="text-sm text-gray-500 leading-relaxed line-clamp-2">{result.snippet}</p>
                   </div>
                 </div>
               </div>
@@ -238,17 +217,15 @@ export default function GlobalSearchPage() {
             </div>
             <div className="p-6 overflow-y-auto">
               <div className="mb-4">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Content Preview</p>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Document Info</p>
                 <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
-                  <p className="text-sm text-gray-600 leading-relaxed">
-                    {highlightText(selectedDoc.snippet, submitted)}
-                  </p>
+                  <p className="text-sm text-gray-600 leading-relaxed">{selectedDoc.snippet}</p>
                 </div>
               </div>
               <div className="mb-4">
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Matched Keywords</p>
                 <div className="flex flex-wrap gap-2">
-                  {selectedDoc.keywords.map((kw: string) => (
+                  {selectedDoc.keywords.map((kw) => (
                     <span key={kw} className="text-xs px-3 py-1 rounded-full bg-yellow-100 text-yellow-800 font-medium">{kw}</span>
                   ))}
                 </div>
@@ -257,7 +234,7 @@ export default function GlobalSearchPage() {
             <div className="px-6 py-4 border-t border-gray-100 flex gap-3 flex-shrink-0">
               <button className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap" type="button">
                 <i className="ri-download-2-line" />
-                Download PDF
+                Download
               </button>
               <button className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-medium transition-colors cursor-pointer whitespace-nowrap" style={{ background: TEAL }} type="button">
                 <i className="ri-eye-line" />

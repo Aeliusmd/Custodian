@@ -1,13 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { MOCK_DOCUMENTS } from '../../../../mocks/documents';
 import type { DocumentRecord } from '../../../../mocks/documents';
 import DocumentViewerModal from '@/app/components/feature/DocumentViewerModal';
 
 const TEAL = '#0097B2';
-const ARCHIVE_STORAGE_KEY = 'user_archived_doc_ids';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
 
 interface Toast {
   id: number;
@@ -18,35 +17,40 @@ interface Toast {
 export default function ArchivedDocumentsPage() {
   const router = useRouter();
   const [archivedDocs, setArchivedDocs] = useState<DocumentRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [viewerDoc, setViewerDoc] = useState<DocumentRecord | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DocumentRecord[] | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  // Load archived docs from localStorage on mount
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(ARCHIVE_STORAGE_KEY);
-      const ids: string[] = stored ? JSON.parse(stored) : [];
-      const docs = MOCK_DOCUMENTS.filter((d) => ids.includes(d.id));
-      setArchivedDocs(docs);
-    } catch {
-      setArchivedDocs([]);
-    }
-  }, []);
-
-  const persistIds = (docs: DocumentRecord[]) => {
-    try {
-      localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(docs.map((d) => d.id)));
-    } catch {}
-  };
-
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     const id = Date.now();
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
   };
+
+  const loadArchived = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const res = await fetch(`${API_BASE_URL}/protected/user/documents?archived=1`, {
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { message?: string };
+        throw new Error(body.message ?? `Failed to load archived documents (${res.status})`);
+      }
+      setArchivedDocs(await res.json() as DocumentRecord[]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load archived documents');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadArchived(); }, [loadArchived]);
 
   const filtered = archivedDocs.filter((d) => {
     const q = search.toLowerCase();
@@ -67,22 +71,40 @@ export default function ArchivedDocumentsPage() {
     else setSelected(new Set(filtered.map((d) => d.id)));
   };
 
-  const handleRestore = (ids: string[]) => {
-    const next = archivedDocs.filter((d) => !ids.includes(d.id));
-    setArchivedDocs(next);
-    persistIds(next);
-    setSelected(new Set());
-    showToast(`${ids.length} document${ids.length > 1 ? 's' : ''} restored successfully`);
+  const handleRestore = async (ids: string[]) => {
+    try {
+      await Promise.all(ids.map((id) =>
+        fetch(`${API_BASE_URL}/protected/user/documents/${id}/archive`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ archived: false }),
+        })
+      ));
+      setArchivedDocs((prev) => prev.filter((d) => !ids.includes(d.id)));
+      setSelected(new Set());
+      showToast(`${ids.length} document${ids.length > 1 ? 's' : ''} restored successfully`);
+    } catch {
+      showToast('Failed to restore documents', 'error');
+    }
   };
 
-  const handlePermanentDelete = (docs: DocumentRecord[]) => {
+  const handlePermanentDelete = async (docs: DocumentRecord[]) => {
     const ids = docs.map((d) => d.id);
-    const next = archivedDocs.filter((d) => !ids.includes(d.id));
-    setArchivedDocs(next);
-    persistIds(next);
-    setSelected(new Set());
-    setConfirmDelete(null);
-    showToast(`${docs.length} document${docs.length > 1 ? 's' : ''} permanently deleted`, 'error');
+    try {
+      await Promise.all(ids.map((id) =>
+        fetch(`${API_BASE_URL}/protected/user/documents/${id}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        })
+      ));
+      setArchivedDocs((prev) => prev.filter((d) => !ids.includes(d.id)));
+      setSelected(new Set());
+      setConfirmDelete(null);
+      showToast(`${docs.length} document${docs.length > 1 ? 's' : ''} permanently deleted`, 'error');
+    } catch {
+      showToast('Failed to delete documents', 'error');
+    }
   };
 
   if (viewerDoc) {
@@ -94,12 +116,7 @@ export default function ArchivedDocumentsPage() {
       {/* Toast */}
       <div className="fixed top-5 right-5 z-[999] flex flex-col gap-2 pointer-events-none">
         {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={`px-4 py-3 rounded-xl text-sm font-medium text-white flex items-center gap-2 ${
-              t.type === 'success' ? 'bg-green-500' : 'bg-red-500'
-            }`}
-          >
+          <div key={t.id} className={`px-4 py-3 rounded-xl text-sm font-medium text-white flex items-center gap-2 ${t.type === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
             <i className={t.type === 'success' ? 'ri-checkbox-circle-line' : 'ri-alert-line'} />
             {t.message}
           </div>
@@ -119,13 +136,17 @@ export default function ArchivedDocumentsPage() {
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold text-[#1a2340]">Archived Documents</h1>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
-                {archivedDocs.length} archived
+                {loading ? '...' : `${archivedDocs.length} archived`}
               </span>
             </div>
             <p className="text-sm text-gray-400 mt-0.5">Documents moved to archive — restore or permanently delete</p>
           </div>
         </div>
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+      )}
 
       {/* Info banner */}
       <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200 mb-5">
@@ -156,15 +177,12 @@ export default function ArchivedDocumentsPage() {
 
       {/* Bulk action bar */}
       {selected.size > 0 && (
-        <div
-          className="flex items-center gap-3 px-4 py-3 rounded-xl mb-4 text-white"
-          style={{ background: '#92400e' }}
-        >
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl mb-4 text-white" style={{ background: '#92400e' }}>
           <i className="ri-checkbox-multiple-line" />
           <span className="text-sm font-semibold">{selected.size} selected</span>
           <div className="flex-1" />
           <button
-            onClick={() => handleRestore(Array.from(selected))}
+            onClick={() => void handleRestore(Array.from(selected))}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-medium transition-all cursor-pointer whitespace-nowrap"
           >
             <i className="ri-inbox-unarchive-line" /> Restore Selected
@@ -183,7 +201,9 @@ export default function ArchivedDocumentsPage() {
 
       {/* Table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="py-16 text-center text-gray-400 text-sm animate-pulse">Loading archived documents...</div>
+        ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-400">
             <div className="w-16 h-16 rounded-2xl bg-gray-50 flex items-center justify-center mb-4">
               <i className="ri-archive-line text-3xl text-gray-300" />
@@ -199,12 +219,7 @@ export default function ArchivedDocumentsPage() {
               <thead>
                 <tr className="border-b border-gray-100">
                   <th className="w-10 px-4 py-3 text-left">
-                    <input
-                      type="checkbox"
-                      checked={selected.size === filtered.length && filtered.length > 0}
-                      onChange={toggleAll}
-                      className="w-4 h-4 rounded cursor-pointer accent-amber-600"
-                    />
+                    <input type="checkbox" checked={selected.size === filtered.length && filtered.length > 0} onChange={toggleAll} className="w-4 h-4 rounded cursor-pointer accent-amber-600" />
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Document Name</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Category</th>
@@ -221,12 +236,7 @@ export default function ArchivedDocumentsPage() {
                     onClick={() => setViewerDoc(doc)}
                   >
                     <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selected.has(doc.id)}
-                        onChange={() => toggleSelect(doc.id)}
-                        className="w-4 h-4 rounded cursor-pointer accent-amber-600"
-                      />
+                      <input type="checkbox" checked={selected.has(doc.id)} onChange={() => toggleSelect(doc.id)} className="w-4 h-4 rounded cursor-pointer accent-amber-600" />
                     </td>
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-3">
@@ -240,9 +250,7 @@ export default function ArchivedDocumentsPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3.5">
-                      <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
-                        {doc.category}
-                      </span>
+                      <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">{doc.category}</span>
                     </td>
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-2">
@@ -256,7 +264,7 @@ export default function ArchivedDocumentsPage() {
                     <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => handleRestore([doc.id])}
+                          onClick={() => void handleRestore([doc.id])}
                           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap"
                           style={{ color: TEAL, background: `${TEAL}12` }}
                         >
@@ -279,11 +287,9 @@ export default function ArchivedDocumentsPage() {
           </div>
         )}
 
-        {filtered.length > 0 && (
+        {!loading && filtered.length > 0 && (
           <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
-            <p className="text-xs text-gray-400">
-              {filtered.length} archived document{filtered.length !== 1 ? 's' : ''}
-            </p>
+            <p className="text-xs text-gray-400">{filtered.length} archived document{filtered.length !== 1 ? 's' : ''}</p>
             <p className="text-xs text-gray-400">Click a row to view document</p>
           </div>
         )}
@@ -317,7 +323,7 @@ export default function ArchivedDocumentsPage() {
                   Cancel
                 </button>
                 <button
-                  onClick={() => handlePermanentDelete(confirmDelete)}
+                  onClick={() => void handlePermanentDelete(confirmDelete)}
                   className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
                 >
                   <i className="ri-delete-bin-line" /> Delete Forever

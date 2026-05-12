@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 const TEAL = '#0097B2';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
 
 interface NotificationSetting {
   id: string;
@@ -18,18 +19,11 @@ interface Toast {
   message: string;
 }
 
-const INITIAL_SETTINGS: NotificationSetting[] = [
-  { id: 'email_notifications', label: 'Email Notifications', description: 'Receive email alerts for important system events and updates', icon: 'ri-mail-send-line', enabled: true, category: 'General' },
-  { id: 'upload_notifications', label: 'Upload Notifications', description: 'Get notified when one of your documents uploads successfully', icon: 'ri-upload-cloud-2-line', enabled: true, category: 'Documents' },
-  { id: 'sharing_notifications', label: 'Sharing Notifications', description: 'Receive alerts when documents are shared with you', icon: 'ri-share-line', enabled: true, category: 'Documents' },
-  { id: 'version_notifications', label: 'Version Updates', description: 'Be notified when a new version of a document you follow is uploaded', icon: 'ri-history-line', enabled: false, category: 'Documents' },
-  { id: 'login_notifications', label: 'Login Activity', description: 'Receive email alerts for sign-ins from new devices or unusual locations', icon: 'ri-shield-check-line', enabled: true, category: 'Security' },
-  { id: 'storage_notifications', label: 'Storage Limit Warnings', description: 'Get notified when your storage usage reaches 80% or 95% of your limit', icon: 'ri-database-2-line', enabled: true, category: 'System' },
-  { id: 'report_notifications', label: 'Weekly Summary Report', description: 'Receive a weekly digest of your upload activity and document stats', icon: 'ri-bar-chart-2-line', enabled: false, category: 'Reports' },
-];
-
 export default function UserNotificationsPage() {
-  const [settings, setSettings] = useState<NotificationSetting[]>(INITIAL_SETTINGS);
+  const [settings, setSettings] = useState<NotificationSetting[]>([]);
+  const [original, setOriginal] = useState<NotificationSetting[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -39,6 +33,23 @@ export default function UserNotificationsPage() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
   };
 
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE_URL}/user/settings/notifications`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to load notifications');
+      const data = await res.json() as NotificationSetting[];
+      setSettings(data);
+      setOriginal(data);
+    } catch {
+      // silently ignore
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
   const toggle = (id: string) => {
     setSettings((prev) => prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s)));
     setHasChanges(true);
@@ -47,10 +58,42 @@ export default function UserNotificationsPage() {
   const enableAll = () => { setSettings((prev) => prev.map((s) => ({ ...s, enabled: true }))); setHasChanges(true); };
   const disableAll = () => { setSettings((prev) => prev.map((s) => ({ ...s, enabled: false }))); setHasChanges(true); };
 
-  const handleSave = () => { setHasChanges(false); showToast('Notification preferences saved'); };
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      const res = await fetch(`${API_BASE_URL}/user/settings/notifications`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+      const updated = await res.json() as NotificationSetting[];
+      setSettings(updated);
+      setOriginal(updated);
+      setHasChanges(false);
+      showToast('Notification preferences saved');
+    } catch {
+      showToast('Failed to save preferences');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const categories = Array.from(new Set(settings.map((s) => s.category)));
   const enabledCount = settings.filter((s) => s.enabled).length;
+
+  if (loading) {
+    return (
+      <div className="p-6 min-h-full font-inter">
+        <div className="max-w-2xl space-y-4 animate-pulse">
+          <div className="h-6 bg-gray-100 rounded w-48 mb-2" />
+          <div className="bg-white rounded-2xl border border-gray-200 h-20" />
+          <div className="bg-white rounded-2xl border border-gray-200 h-48" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 min-h-full font-inter">
@@ -79,7 +122,7 @@ export default function UserNotificationsPage() {
             <div>
               <p className="text-sm font-semibold text-[#1a2340]">{enabledCount} of {settings.length} notifications enabled</p>
               <div className="w-40 h-1.5 bg-gray-100 rounded-full mt-1.5">
-                <div className="h-full rounded-full transition-all" style={{ width: `${(enabledCount / settings.length) * 100}%`, background: TEAL }} />
+                <div className="h-full rounded-full transition-all" style={{ width: settings.length > 0 ? `${(enabledCount / settings.length) * 100}%` : '0%', background: TEAL }} />
               </div>
             </div>
           </div>
@@ -89,40 +132,45 @@ export default function UserNotificationsPage() {
           </div>
         </div>
 
-        {/* Settings by Category */}
-        {categories.map((category) => {
-          const catSettings = settings.filter((s) => s.category === category);
-          return (
-            <div key={category} className="bg-white rounded-2xl border border-gray-200 overflow-hidden mb-4">
-              <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/50">
-                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">{category}</h3>
-              </div>
-              <div className="divide-y divide-gray-50">
-                {catSettings.map((setting) => (
-                  <div key={setting.id} className="flex items-start gap-4 px-5 py-4">
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${setting.enabled ? '' : 'bg-gray-100'}`} style={setting.enabled ? { background: `${TEAL}15` } : {}}>
-                      <i className={`${setting.icon} text-sm transition-colors ${setting.enabled ? '' : 'text-gray-300'}`} style={setting.enabled ? { color: TEAL } : {}} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className={`text-sm font-semibold transition-colors ${setting.enabled ? 'text-[#1a2340]' : 'text-gray-400'}`}>{setting.label}</p>
-                          <p className={`text-xs mt-0.5 transition-colors ${setting.enabled ? 'text-gray-400' : 'text-gray-300'}`}>{setting.description}</p>
+        {settings.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-200 py-12 text-center text-gray-400 text-sm">
+            No notification settings available.
+          </div>
+        ) : (
+          categories.map((category) => {
+            const catSettings = settings.filter((s) => s.category === category);
+            return (
+              <div key={category} className="bg-white rounded-2xl border border-gray-200 overflow-hidden mb-4">
+                <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/50">
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">{category}</h3>
+                </div>
+                <div className="divide-y divide-gray-50">
+                  {catSettings.map((setting) => (
+                    <div key={setting.id} className="flex items-start gap-4 px-5 py-4">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${setting.enabled ? '' : 'bg-gray-100'}`} style={setting.enabled ? { background: `${TEAL}15` } : {}}>
+                        <i className={`${setting.icon} text-sm transition-colors ${setting.enabled ? '' : 'text-gray-300'}`} style={setting.enabled ? { color: TEAL } : {}} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className={`text-sm font-semibold transition-colors ${setting.enabled ? 'text-[#1a2340]' : 'text-gray-400'}`}>{setting.label}</p>
+                            <p className={`text-xs mt-0.5 transition-colors ${setting.enabled ? 'text-gray-400' : 'text-gray-300'}`}>{setting.description}</p>
+                          </div>
+                          <button
+                            onClick={() => toggle(setting.id)}
+                            className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer flex-shrink-0 mt-1 ${setting.enabled ? 'bg-[#0097B2]' : 'bg-gray-200'}`}
+                          >
+                            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${setting.enabled ? 'right-0.5' : 'left-0.5'}`} />
+                          </button>
                         </div>
-                        <button
-                          onClick={() => toggle(setting.id)}
-                          className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer flex-shrink-0 mt-1 ${setting.enabled ? 'bg-[#0097B2]' : 'bg-gray-200'}`}
-                        >
-                          <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${setting.enabled ? 'right-0.5' : 'left-0.5'}`} />
-                        </button>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
 
         {/* Save Button */}
         <div className="flex items-center justify-end gap-3 pt-2">
@@ -133,12 +181,12 @@ export default function UserNotificationsPage() {
             </p>
           )}
           <button
-            onClick={handleSave}
-            disabled={!hasChanges}
-            className={`px-6 py-2.5 rounded-xl text-white text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${hasChanges ? 'opacity-100' : 'opacity-50 cursor-not-allowed'}`}
+            onClick={() => void handleSave()}
+            disabled={!hasChanges || saving}
+            className={`px-6 py-2.5 rounded-xl text-white text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${hasChanges && !saving ? 'opacity-100' : 'opacity-50 cursor-not-allowed'}`}
             style={{ background: TEAL }}
           >
-            Save Preferences
+            {saving ? 'Saving...' : 'Save Preferences'}
           </button>
         </div>
       </div>
