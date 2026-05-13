@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { mockCategories } from '../mockCategories';
+import type { Category } from '../../categories/types';
 import styles from '../upload-documents.module.css';
 
 const STEPS = ['Select Category', 'Upload File', 'Metadata', 'Privacy', 'Complete'];
@@ -12,6 +12,8 @@ interface MetaValues {
 }
 
 export default function SingleUpload() {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+  const [categories, setCategories] = useState<Category[]>([]);
   const [step, setStep] = useState(0);
   const [selectedCatId, setSelectedCatId] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -20,9 +22,31 @@ export default function SingleUpload() {
   const [privacy, setPrivacy] = useState<'Public' | 'Private'>('Private');
   const [uploading, setUploading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [apiError, setApiError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
-  const selectedCat = mockCategories.find((category) => category.id === selectedCatId);
+  const selectedCat = categories.find((category) => category.id === selectedCatId);
+
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/protected/org-admin/categories`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load categories (${response.status})`);
+        }
+        const data = (await response.json()) as Category[];
+        setCategories(data ?? []);
+      } catch (e) {
+        setApiError(e instanceof Error ? e.message : 'Failed to load categories');
+        setCategories([]);
+      }
+    };
+    void loadCategories();
+  }, [API_BASE_URL]);
 
   const validateStep = () => {
     const nextErrors: Record<string, string> = {};
@@ -56,12 +80,66 @@ export default function SingleUpload() {
     if (pickedFile) setFile(pickedFile);
   };
 
-  const handleFinalUpload = () => {
+  const readFileAsBase64 = (uploaded: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        if (typeof result !== 'string') {
+          reject(new Error('Could not read file'));
+          return;
+        }
+        const i = result.indexOf(',');
+        resolve(i >= 0 ? result.slice(i + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
+      reader.readAsDataURL(uploaded);
+    });
+
+  const handleFinalUpload = async () => {
+    if (!file) return;
+    if (!selectedCat || !selectedCat.id) {
+      setApiError('Please select a category before uploading.');
+      return;
+    }
     setUploading(true);
-    window.setTimeout(() => {
-      setUploading(false);
+    setApiError('');
+    try {
+      const fileBase64 = await readFileAsBase64(file);
+      const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents/single`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          categoryId: String(selectedCat.id),
+          fileName: file.name,
+          fileBase64,
+          visibility: privacy,
+          metadata: metaValues,
+          fileType: file.type || file.name.split('.').pop() || 'unknown',
+          fileSizeKb: Math.ceil(file.size / 1024),
+          pageCount: 0,
+        }),
+      });
+      if (!response.ok) {
+        let message = `Failed to upload (${response.status})`;
+        try {
+          const errBody = (await response.json()) as { message?: string };
+          if (errBody?.message) message = `${message}: ${errBody.message}`;
+        } catch {
+          if (response.status === 413) {
+            message +=
+              ': The upload payload was too large for the server. Base64 JSON is bigger than the file itself—try a smaller file or ensure the API allows a large enough JSON body.';
+          }
+        }
+        throw new Error(message);
+      }
       setStep(4);
-    }, 1800);
+    } catch (e) {
+      setApiError(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const formatSize = (bytes: number) => {
@@ -123,7 +201,7 @@ export default function SingleUpload() {
             <p className="text-sm text-gray-400">Choose the category for this document</p>
           </div>
           <div className={styles.categoryGrid}>
-            {mockCategories.map((category) => {
+            {categories.map((category) => {
               const selected = selectedCatId === category.id;
               return (
                 <button
@@ -155,6 +233,9 @@ export default function SingleUpload() {
             })}
           </div>
           {errors.cat && <p className="text-sm text-red-400">{errors.cat}</p>}
+          {categories.length === 0 && !apiError && (
+            <p className="text-sm text-gray-400">No categories available yet. Create categories first.</p>
+          )}
         </div>
       )}
 
@@ -388,6 +469,11 @@ export default function SingleUpload() {
               )}
             </button>
           )}
+        </div>
+      )}
+      {apiError && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+          {apiError}
         </div>
       )}
           </div>

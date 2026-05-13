@@ -1,0 +1,57 @@
+import { Router } from "express";
+import { protectedController } from "../controllers/protectedController";
+import { memoryUploadBulk } from "../middlewares/documentUploadMemory";
+import { requireAuth, requireRole } from "../middlewares/authMiddleware";
+
+const protectedRoutes = Router();
+
+protectedRoutes.get("/org-admin", requireAuth, requireRole("ORG_ADMIN"), protectedController.orgAdminData);
+protectedRoutes.get("/org-admin/dashboard", requireAuth, requireRole("ORG_ADMIN"), protectedController.orgAdminDashboard);
+protectedRoutes.get("/org-admin/categories", requireAuth, requireRole("ORG_ADMIN"), protectedController.listOrgAdminCategories);
+protectedRoutes.post("/org-admin/categories", requireAuth, requireRole("ORG_ADMIN"), protectedController.createOrgAdminCategory);
+protectedRoutes.put("/org-admin/categories/:id", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminCategory);
+protectedRoutes.delete("/org-admin/categories/:id", requireAuth, requireRole("ORG_ADMIN"), protectedController.deleteOrgAdminCategory);
+protectedRoutes.get("/org-admin/users", requireAuth, requireRole("ORG_ADMIN"), protectedController.listOrgAdminUsers);
+protectedRoutes.post("/org-admin/users", requireAuth, requireRole("ORG_ADMIN"), protectedController.createOrgAdminUser);
+protectedRoutes.put("/org-admin/users/:id", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminUser);
+protectedRoutes.delete("/org-admin/users/:id", requireAuth, requireRole("ORG_ADMIN"), protectedController.deleteOrgAdminUser);
+protectedRoutes.post("/org-admin/users/:id/reset-password", requireAuth, requireRole("ORG_ADMIN"), protectedController.resetOrgAdminUserPassword);
+protectedRoutes.post(
+  "/org-admin/documents/single",
+  requireAuth,
+  requireRole("ORG_ADMIN"),
+  protectedController.createOrgAdminSingleDocument,
+);
+protectedRoutes.post(
+  "/org-admin/documents/bulk",
+  requireAuth,
+  requireRole("ORG_ADMIN"),
+  memoryUploadBulk,
+  protectedController.createOrgAdminBulkDocuments,
+);
+protectedRoutes.get("/org-admin/documents", requireAuth, requireRole("ORG_ADMIN"), protectedController.listOrgAdminDocuments);
+protectedRoutes.get(
+  "/org-admin/documents/:id/preview/:pageNum",
+  requireAuth,
+  requireRole("ORG_ADMIN"),
+  protectedController.getOrgAdminDocumentPreview,
+);
+protectedRoutes.get(
+  "/org-admin/documents/:id/file",
+  requireAuth,
+  requireRole("ORG_ADMIN"),
+  protectedController.getOrgAdminDocumentFile,
+);
+protectedRoutes.get("/org-admin/documents/:id", requireAuth, requireRole("ORG_ADMIN"), protectedController.getOrgAdminDocument);
+protectedRoutes.patch("/org-admin/documents/:id/archive", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminDocumentArchiveStatus);
+protectedRoutes.patch("/org-admin/documents/:id/metadata", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminDocumentMetadata);
+protectedRoutes.delete("/org-admin/documents/:id", requireAuth, requireRole("ORG_ADMIN"), protectedController.deleteOrgAdminDocument);
+protectedRoutes.get("/user", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.userData);
+protectedRoutes.get(
+  "/super-admin",
+  requireAuth,
+  requireRole("SUPER_ADMIN"),
+  protectedController.superAdminData,
+);
+
+export default protectedRoutes;

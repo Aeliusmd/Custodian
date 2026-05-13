@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { mockCategories } from '../mockCategories';
+import type { Category } from '../../categories/types';
 import styles from '../upload-documents.module.css';
 
 const STEPS = ['Select Category', 'Upload Files', 'Download Template', 'Upload Template', 'Privacy', 'Complete'];
@@ -14,6 +14,8 @@ interface UploadedFile {
 }
 
 export default function BulkUpload() {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+  const [categories, setCategories] = useState<Category[]>([]);
   const [step, setStep] = useState(0);
   const [selectedCatId, setSelectedCatId] = useState('');
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -24,10 +26,33 @@ export default function BulkUpload() {
   const [privacy, setPrivacy] = useState<'Public' | 'Private'>('Private');
   const [uploading, setUploading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [apiError, setApiError] = useState('');
+  const [templateByFileName, setTemplateByFileName] = useState<Record<string, Record<string, string>>>({});
   const fileRef = useRef<HTMLInputElement>(null);
   const templateRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
-  const selectedCat = mockCategories.find((c) => c.id === selectedCatId);
+  const selectedCat = categories.find((c) => c.id === selectedCatId);
+
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/protected/org-admin/categories`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load categories (${response.status})`);
+        }
+        const data = (await response.json()) as Category[];
+        setCategories(data ?? []);
+      } catch (e) {
+        setApiError(e instanceof Error ? e.message : 'Failed to load categories');
+        setCategories([]);
+      }
+    };
+    void loadCategories();
+  }, [API_BASE_URL]);
 
   const validateStep = () => {
     const nextErrors: Record<string, string> = {};
@@ -69,16 +94,95 @@ export default function BulkUpload() {
     if (!(file.name.endsWith('.csv') || file.name.endsWith('.xlsx'))) {
       nextErrors.push('Invalid file format. Please upload .xlsx or .csv');
     }
+    if (nextErrors.length === 0 && file.name.endsWith('.csv')) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const content = String(reader.result ?? '');
+        const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
+        if (lines.length <= 1) {
+          setTemplateErrors(['Template is empty']);
+          setTemplateByFileName({});
+          return;
+        }
+        const parseCsv = (line: string): string[] =>
+          line
+            .split(',')
+            .map((cell) => cell.trim().replace(/^"|"$/g, ''));
+        const headers = parseCsv(lines[0]);
+        const fileNameIdx = headers.findIndex((h) => h.toLowerCase() === 'file name');
+        if (fileNameIdx < 0) {
+          setTemplateErrors(['Template must contain "File Name" column']);
+          setTemplateByFileName({});
+          return;
+        }
+
+        const nextMap: Record<string, Record<string, string>> = {};
+        for (let i = 1; i < lines.length; i += 1) {
+          const cols = parseCsv(lines[i]);
+          const fileName = cols[fileNameIdx] ?? '';
+          if (!fileName) continue;
+          const rowMap: Record<string, string> = {};
+          headers.forEach((header, idx) => {
+            if (idx === fileNameIdx) return;
+            rowMap[header] = cols[idx] ?? '';
+          });
+          nextMap[fileName] = rowMap;
+        }
+        setTemplateByFileName(nextMap);
+      };
+      reader.readAsText(file);
+    }
     setTemplateErrors(nextErrors);
     setErrors({});
   };
 
-  const handleFinalUpload = () => {
+  const handleFinalUpload = async () => {
+    if (!selectedCat) return;
     setUploading(true);
-    window.setTimeout(() => {
-      setUploading(false);
+    setApiError('');
+    try {
+      const metadataByFieldNameToId = (row: Record<string, string>): Record<string, string> => {
+        const mapped: Record<string, string> = {};
+        selectedCat.fields.forEach((field) => {
+          mapped[field.id] = row[field.name] ?? '';
+        });
+        return mapped;
+      };
+
+      const manifest = files.map((item) => ({
+        fileType: item.file.type || item.file.name.split('.').pop() || 'unknown',
+        fileSizeKb: Math.ceil(item.file.size / 1024),
+        pageCount: 0,
+        metadata: metadataByFieldNameToId(templateByFileName[item.file.name] ?? {}),
+      }));
+      const form = new FormData();
+      form.append('categoryId', selectedCat.id);
+      form.append('visibility', privacy);
+      form.append('manifest', JSON.stringify(manifest));
+      files.forEach((item) => {
+        form.append('files', item.file);
+      });
+      const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents/bulk`, {
+        method: 'POST',
+        credentials: 'include',
+        body: form,
+      });
+      if (!response.ok) {
+        let message = `Failed bulk upload (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // Keep status-only message.
+        }
+        throw new Error(message);
+      }
       setStep(5);
-    }, 2200);
+    } catch (e) {
+      setApiError(e instanceof Error ? e.message : 'Bulk upload failed');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const formatSize = (bytes: number) => {
@@ -155,7 +259,7 @@ export default function BulkUpload() {
             <p className="text-sm text-gray-400">Choose the category for all documents in this batch</p>
           </div>
           <div className={styles.categoryGrid}>
-            {mockCategories.map((category) => {
+            {categories.map((category) => {
               const selected = selectedCatId === category.id;
               return (
                 <button
@@ -187,6 +291,9 @@ export default function BulkUpload() {
             })}
           </div>
           {errors.cat && <p className="text-sm text-red-400">{errors.cat}</p>}
+          {categories.length === 0 && !apiError && (
+            <p className="text-sm text-gray-400">No categories available yet. Create categories first.</p>
+          )}
         </div>
       )}
 
@@ -500,6 +607,11 @@ export default function BulkUpload() {
               )}
             </button>
           )}
+        </div>
+      )}
+      {apiError && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+          {apiError}
         </div>
       )}
           </div>

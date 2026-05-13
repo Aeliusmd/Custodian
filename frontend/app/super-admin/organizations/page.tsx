@@ -1,9 +1,8 @@
 "use client";
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import CreateOrgModal from './CreateOrgModal/page';
-import { mockOrgs } from './mockData';
 import OrgDetailModal from './OrgDetailModal/page';
 import { Organization } from './types';
 
@@ -44,7 +43,7 @@ const getDocBarColorClass = (pct: number) => {
 };
 
 export default function OrganizationsPage() {
-  const [orgs, setOrgs] = useState<Organization[]>(mockOrgs);
+  const [orgs, setOrgs] = useState<Organization[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Inactive'>('All');
   const [planFilter, setPlanFilter] = useState<'All' | 'Manual' | 'Subscription'>('All');
@@ -52,32 +51,204 @@ export default function OrganizationsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [editOrg, setEditOrg] = useState<Organization | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [loadingEditOrgId, setLoadingEditOrgId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const filtered = orgs.filter((org) => {
-    const matchSearch = org.name.toLowerCase().includes(search.toLowerCase()) || org.email.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = statusFilter === 'All' || org.status === statusFilter;
-    const matchPlan = planFilter === 'All' || org.planType === planFilter;
-    return matchSearch && matchStatus && matchPlan;
-  });
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 
-  const handleDeactivate = (id: string) => {
-    setOrgs((prev) => prev.map((org) => (org.id === id ? { ...org, status: org.status === 'Active' ? 'Inactive' : 'Active' } : org)));
-    setDeleteConfirm(null);
-  };
-
-  const handleDelete = (id: string) => {
-    setOrgs((prev) => prev.filter((org) => org.id !== id));
-    setDeleteConfirm(null);
-  };
-
-  const handleSaveOrg = (nextOrg: Organization) => {
-    if (editOrg) {
-      setOrgs((prev) => prev.map((org) => (org.id === nextOrg.id ? nextOrg : org)));
-    } else {
-      setOrgs((prev) => [...prev, nextOrg]);
+  const loadOrganizations = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const params = new URLSearchParams();
+      if (search.trim()) params.set('search', search.trim());
+      if (statusFilter !== 'All') params.set('status', statusFilter);
+      if (planFilter !== 'All') params.set('planType', planFilter);
+      const query = params.toString();
+      const res = await fetch(`${API_BASE_URL}/super-admin/organizations${query ? `?${query}` : ''}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        let message = `Failed to load organizations (${res.status})`;
+        try {
+          const errBody = (await res.json()) as { message?: string };
+          if (errBody?.message) {
+            message = `${message}: ${errBody.message}`;
+          }
+        } catch {
+          // Ignore body parse errors and keep status-only message.
+        }
+        throw new Error(message);
+      }
+      const data = (await res.json()) as Organization[];
+      setOrgs(data);
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : 'Unknown error';
+      setError(`Unable to load organizations from database. ${reason}`);
+      setOrgs([]);
+    } finally {
+      setLoading(false);
     }
-    setShowCreate(false);
-    setEditOrg(null);
+  }, [API_BASE_URL, planFilter, search, statusFilter]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void loadOrganizations();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [loadOrganizations]);
+
+  // Render DB-filtered results returned by backend.
+  const filtered = orgs;
+
+  const handleDeactivate = async (id: string) => {
+    const target = orgs.find((org) => org.id === id);
+    if (!target) return;
+    const nextStatus = target.status === 'Active' ? 'Inactive' : 'Active';
+    try {
+      setActionLoading(true);
+      setError('');
+      const res = await fetch(`${API_BASE_URL}/super-admin/organizations/${id}/status`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      if (!res.ok) throw new Error(`Failed to update status (${res.status})`);
+      await loadOrganizations();
+      if (selectedOrg?.id === id) {
+        setSelectedOrg((prev) => (prev ? { ...prev, status: nextStatus } : prev));
+      }
+      setDeleteConfirm(null);
+    } catch {
+      setError('Failed to update organization status. Please check backend auth/session and try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      setActionLoading(true);
+      setError('');
+      const res = await fetch(`${API_BASE_URL}/super-admin/organizations/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error(`Failed to delete organization (${res.status})`);
+      setOrgs((prev) => prev.filter((org) => org.id !== id));
+      if (selectedOrg?.id === id) setSelectedOrg(null);
+      setDeleteConfirm(null);
+    } catch {
+      setError('Failed to delete organization. Please check backend auth/session and try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleSaveOrg = async (nextOrg: Organization) => {
+    try {
+      setActionLoading(true);
+      setError('');
+      if (editOrg) {
+        const updateRes = await fetch(`${API_BASE_URL}/super-admin/organizations/${nextOrg.id}`, {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(nextOrg),
+        });
+        if (!updateRes.ok) {
+          let message = `Failed to update organization (${updateRes.status})`;
+          try {
+            const data = (await updateRes.json()) as { message?: string };
+            if (data?.message) message = `${message}: ${data.message}`;
+          } catch {
+            // Keep status-only message
+          }
+          throw new Error(message);
+        }
+
+        if (nextOrg.status !== editOrg.status) {
+          const statusRes = await fetch(`${API_BASE_URL}/super-admin/organizations/${nextOrg.id}/status`, {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: nextOrg.status }),
+          });
+          if (!statusRes.ok) {
+            let message = `Failed to update organization status (${statusRes.status})`;
+            try {
+              const data = (await statusRes.json()) as { message?: string };
+              if (data?.message) message = `${message}: ${data.message}`;
+            } catch {
+              // Keep status-only message
+            }
+            throw new Error(message);
+          }
+        }
+      } else {
+        const createRes = await fetch(`${API_BASE_URL}/super-admin/organizations`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(nextOrg),
+        });
+        if (!createRes.ok) {
+          let message = `Failed to create organization (${createRes.status})`;
+          try {
+            const data = (await createRes.json()) as { message?: string };
+            if (data?.message) message = `${message}: ${data.message}`;
+          } catch {
+            // Keep status-only message
+          }
+          throw new Error(message);
+        }
+      }
+      await loadOrganizations();
+      setShowCreate(false);
+      setEditOrg(null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to save organization';
+      setError(message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleEditOrganization = async (org: Organization) => {
+    try {
+      setActionLoading(true);
+      setLoadingEditOrgId(org.id);
+      setError('');
+      const res = await fetch(`${API_BASE_URL}/super-admin/organizations/${org.id}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        let message = `Failed to load organization details (${res.status})`;
+        try {
+          const data = (await res.json()) as { message?: string };
+          if (data?.message) message = `${message}: ${data.message}`;
+        } catch {
+          // Ignore parse errors; keep status message.
+        }
+        throw new Error(message);
+      }
+      const fullOrg = (await res.json()) as Organization;
+      setEditOrg(fullOrg);
+      setShowCreate(true);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to load organization details';
+      setError(message);
+    } finally {
+      setActionLoading(false);
+      setLoadingEditOrgId(null);
+    }
   };
 
   return (
@@ -87,12 +258,20 @@ export default function OrganizationsPage() {
           <h1 className="font-outfit font-bold text-2xl text-brand-navy">Organizations</h1>
           <p className="text-brand-muted text-sm mt-0.5">{orgs.length} total organizations</p>
         </div>
-        <button onClick={() => { setEditOrg(null); setShowCreate(true); }} className="flex items-center gap-2 px-4 py-2 bg-[#0097B2] text-white rounded-lg text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap">
+        <button
+          disabled={actionLoading}
+          onClick={() => { setEditOrg(null); setShowCreate(true); }}
+          className="flex items-center gap-2 px-4 py-2 bg-[#0097B2] text-white rounded-lg text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap disabled:opacity-60"
+        >
           <i className="ri-add-line" />
           Create Organization
         </button>
       </div>
-
+      {error && (
+        <div className="rounded-lg border border-[#d97706]/30 bg-[#d97706]/10 px-3 py-2 text-xs text-[#92400e]">
+          {error}
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {summaryCards.map((card) => (
           <div key={card.label} className="bg-white rounded-xl border border-brand-border p-4 flex items-center gap-3">
@@ -134,7 +313,7 @@ export default function OrganizationsPage() {
             </button>
           ))}
         </div>
-        <span className="text-xs text-brand-muted sm:ml-auto">{filtered.length} results</span>
+        <span className="text-xs text-brand-muted sm:ml-auto">{loading ? 'Loading...' : `${filtered.length} results`}</span>
       </div>
 
       <div className="bg-white rounded-xl border border-brand-border overflow-hidden">
@@ -181,7 +360,14 @@ export default function OrganizationsPage() {
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-1">
                         <button title="View details" onClick={() => setSelectedOrg(org)} className="w-8 h-8 flex items-center justify-center rounded-lg text-brand-muted hover:text-[#0097B2] hover:bg-[#0097B2]/10 transition-all"><i className="ri-eye-line text-sm" /></button>
-                        <button title="Edit organization" onClick={() => { setEditOrg(org); setShowCreate(true); }} className="w-8 h-8 flex items-center justify-center rounded-lg text-brand-muted hover:text-[#d97706] hover:bg-[#d97706]/10 transition-all"><i className="ri-edit-line text-sm" /></button>
+                        <button
+                          title="Edit organization"
+                          disabled={actionLoading}
+                          onClick={() => { void handleEditOrganization(org); }}
+                          className="w-8 h-8 flex items-center justify-center rounded-lg text-brand-muted hover:text-[#d97706] hover:bg-[#d97706]/10 transition-all disabled:opacity-60"
+                        >
+                          <i className={`${loadingEditOrgId === org.id ? 'ri-loader-4-line animate-spin' : 'ri-edit-line'} text-sm`} />
+                        </button>
                         <button title="Deactivate or delete" onClick={() => setDeleteConfirm(org.id)} className="w-8 h-8 flex items-center justify-center rounded-lg text-brand-muted hover:text-red-500 hover:bg-red-50 transition-all"><i className="ri-delete-bin-line text-sm" /></button>
                       </div>
                     </td>
@@ -235,7 +421,15 @@ export default function OrganizationsPage() {
                 </div>
                 <div className="flex items-center gap-2 pt-1">
                   <button title="View details" onClick={() => setSelectedOrg(org)} className="h-8 px-3 flex items-center justify-center rounded-lg text-xs border border-brand-border text-brand-muted hover:text-[#0097B2] hover:bg-[#0097B2]/10 transition-all"><i className="ri-eye-line text-sm mr-1" />View</button>
-                  <button title="Edit organization" onClick={() => { setEditOrg(org); setShowCreate(true); }} className="h-8 px-3 flex items-center justify-center rounded-lg text-xs border border-brand-border text-brand-muted hover:text-[#d97706] hover:bg-[#d97706]/10 transition-all"><i className="ri-edit-line text-sm mr-1" />Edit</button>
+                  <button
+                    title="Edit organization"
+                    disabled={actionLoading}
+                    onClick={() => { void handleEditOrganization(org); }}
+                    className="h-8 px-3 flex items-center justify-center rounded-lg text-xs border border-brand-border text-brand-muted hover:text-[#d97706] hover:bg-[#d97706]/10 transition-all disabled:opacity-60"
+                  >
+                    <i className={`${loadingEditOrgId === org.id ? 'ri-loader-4-line animate-spin' : 'ri-edit-line'} text-sm mr-1`} />
+                    Edit
+                  </button>
                   <button title="Deactivate or delete" onClick={() => setDeleteConfirm(org.id)} className="h-8 px-3 flex items-center justify-center rounded-lg text-xs border border-brand-border text-brand-muted hover:text-red-500 hover:bg-red-50 transition-all"><i className="ri-delete-bin-line text-sm mr-1" />Delete</button>
                 </div>
               </div>
@@ -257,9 +451,15 @@ export default function OrganizationsPage() {
               <p className="text-sm text-brand-muted">Choose an action for this organization.</p>
             </div>
             <div className="flex flex-col gap-2 w-full">
-              <button onClick={() => handleDeactivate(deleteConfirm)} className="w-full px-4 py-2.5 rounded-lg bg-[#d97706] text-white text-sm font-medium hover:bg-[#b45309] transition-colors whitespace-nowrap">Deactivate Organization</button>
-              <button onClick={() => handleDelete(deleteConfirm)} className="w-full px-4 py-2.5 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors whitespace-nowrap">Delete Permanently</button>
-              <button onClick={() => setDeleteConfirm(null)} className="w-full px-4 py-2.5 rounded-lg border border-brand-border text-sm font-medium text-brand-body hover:bg-brand-surface transition-colors whitespace-nowrap">Cancel</button>
+              <button
+                disabled={actionLoading}
+                onClick={() => handleDeactivate(deleteConfirm)}
+                className="w-full px-4 py-2.5 rounded-lg bg-[#d97706] text-white text-sm font-medium hover:bg-[#b45309] transition-colors whitespace-nowrap disabled:opacity-60"
+              >
+                {orgs.find((o) => o.id === deleteConfirm)?.status === 'Active' ? 'Deactivate Organization' : 'Activate Organization'}
+              </button>
+              <button disabled={actionLoading} onClick={() => handleDelete(deleteConfirm)} className="w-full px-4 py-2.5 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors whitespace-nowrap disabled:opacity-60">Delete Permanently</button>
+              <button disabled={actionLoading} onClick={() => setDeleteConfirm(null)} className="w-full px-4 py-2.5 rounded-lg border border-brand-border text-sm font-medium text-brand-body hover:bg-brand-surface transition-colors whitespace-nowrap disabled:opacity-60">Cancel</button>
             </div>
           </div>
         </div>

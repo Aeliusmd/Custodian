@@ -1,93 +1,10 @@
 "use client";
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import CategoryModal from './CategoryModal/page';
 import type { Category } from './types';
 
 const TEAL = '#0097B2';
-
-const mockCategories: Category[] = [
-  {
-    id: 'CAT-001', name: 'Legal Contracts', description: 'All legal agreements, NDAs, and binding contracts',
-    createdDate: '2025-01-10', docCount: 3240,
-    fields: [
-      { id: 'f1', name: 'Contract Date', type: 'Date', required: true },
-      { id: 'f2', name: 'Counterparty Name', type: 'Text', required: true },
-      { id: 'f3', name: 'Contract Type', type: 'Dropdown', required: true, options: ['NDA', 'Service Agreement', 'Employment', 'Vendor'] },
-      { id: 'f4', name: 'Expiry Date', type: 'Date', required: false },
-      { id: 'f5', name: 'Contract Value', type: 'Number', required: false },
-    ],
-  },
-  {
-    id: 'CAT-002', name: 'Financial Reports', description: 'Quarterly and annual financial statements and summaries',
-    createdDate: '2025-01-10', docCount: 2810,
-    fields: [
-      { id: 'f6', name: 'Report Period', type: 'Dropdown', required: true, options: ['Q1', 'Q2', 'Q3', 'Q4', 'Annual'] },
-      { id: 'f7', name: 'Fiscal Year', type: 'Number', required: true },
-      { id: 'f8', name: 'Prepared By', type: 'Text', required: true },
-      { id: 'f9', name: 'Approved By', type: 'Text', required: false },
-    ],
-  },
-  {
-    id: 'CAT-003', name: 'HR Documents', description: 'Employee records, policies, and HR-related documentation',
-    createdDate: '2025-02-05', docCount: 1950,
-    fields: [
-      { id: 'f10', name: 'Employee Name', type: 'Text', required: true },
-      { id: 'f11', name: 'Employee ID', type: 'Text', required: true },
-      { id: 'f12', name: 'Document Type', type: 'Dropdown', required: true, options: ['Offer Letter', 'Contract', 'Performance Review', 'Termination'] },
-      { id: 'f13', name: 'Effective Date', type: 'Date', required: true },
-    ],
-  },
-  {
-    id: 'CAT-004', name: 'Compliance', description: 'Regulatory compliance documents, audits, and certifications',
-    createdDate: '2025-02-20', docCount: 1620,
-    fields: [
-      { id: 'f14', name: 'Regulation Name', type: 'Text', required: true },
-      { id: 'f15', name: 'Audit Date', type: 'Date', required: true },
-      { id: 'f16', name: 'Compliance Status', type: 'Dropdown', required: true, options: ['Compliant', 'Non-Compliant', 'Under Review'] },
-      { id: 'f17', name: 'Auditor', type: 'Text', required: false },
-      { id: 'f18', name: 'Next Review Date', type: 'Date', required: false },
-    ],
-  },
-  {
-    id: 'CAT-005', name: 'Operations', description: 'Standard operating procedures and operational manuals',
-    createdDate: '2025-03-01', docCount: 1380,
-    fields: [
-      { id: 'f19', name: 'Department', type: 'Dropdown', required: true, options: ['IT', 'Finance', 'HR', 'Legal', 'Operations'] },
-      { id: 'f20', name: 'Version', type: 'Text', required: true },
-      { id: 'f21', name: 'Effective Date', type: 'Date', required: true },
-    ],
-  },
-  {
-    id: 'CAT-006', name: 'Client Proposals', description: 'Business proposals and pitch documents for clients',
-    createdDate: '2025-03-15', docCount: 890,
-    fields: [
-      { id: 'f22', name: 'Client Name', type: 'Text', required: true },
-      { id: 'f23', name: 'Proposal Date', type: 'Date', required: true },
-      { id: 'f24', name: 'Estimated Value', type: 'Number', required: false },
-      { id: 'f25', name: 'Status', type: 'Dropdown', required: true, options: ['Draft', 'Sent', 'Accepted', 'Rejected'] },
-    ],
-  },
-  {
-    id: 'CAT-007', name: 'Insurance Policies', description: 'Corporate insurance documents and policy renewals',
-    createdDate: '2025-04-01', docCount: 420,
-    fields: [
-      { id: 'f26', name: 'Policy Number', type: 'Text', required: true },
-      { id: 'f27', name: 'Insurer', type: 'Text', required: true },
-      { id: 'f28', name: 'Coverage Type', type: 'Dropdown', required: true, options: ['Liability', 'Property', 'Health', 'Cyber'] },
-      { id: 'f29', name: 'Expiry Date', type: 'Date', required: true },
-    ],
-  },
-  {
-    id: 'CAT-008', name: 'Meeting Minutes', description: 'Board and committee meeting records and resolutions',
-    createdDate: '2025-04-10', docCount: 170,
-    fields: [
-      { id: 'f30', name: 'Meeting Date', type: 'Date', required: true },
-      { id: 'f31', name: 'Meeting Type', type: 'Dropdown', required: true, options: ['Board', 'Committee', 'Team', 'AGM'] },
-      { id: 'f32', name: 'Chairperson', type: 'Text', required: true },
-    ],
-  },
-];
 
 const fieldTypeIcon: Record<string, string> = {
   Text:     'ri-text',
@@ -102,12 +19,49 @@ const fieldTypeIcon: Record<string, string> = {
 };
 
 export default function CategoriesPage() {
-  const [categories, setCategories] = useState<Category[]>(mockCategories);
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+  const [categories, setCategories] = useState<Category[]>([]);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editCat, setEditCat] = useState<Category | null>(null);
   const [viewCat, setViewCat] = useState<Category | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadCategories = async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const response = await fetch(`${API_BASE_URL}/protected/org-admin/categories`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        let message = `Failed to load categories (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // Keep status-only message.
+        }
+        throw new Error(message);
+      }
+      const data = (await response.json()) as Category[];
+      setCategories(data ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load categories');
+      setCategories([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadCategories();
+  }, []);
 
   const filtered = categories.filter(
     (c) =>
@@ -115,19 +69,68 @@ export default function CategoriesPage() {
       c.description.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleSave = (cat: Category) => {
-    if (editCat) {
-      setCategories((prev) => prev.map((c) => (c.id === cat.id ? cat : c)));
-    } else {
-      setCategories((prev) => [...prev, cat]);
+  const handleSave = async (cat: Category) => {
+    try {
+      setActionLoading(true);
+      setError('');
+      const endpoint = editCat
+        ? `${API_BASE_URL}/protected/org-admin/categories/${encodeURIComponent(cat.id)}`
+        : `${API_BASE_URL}/protected/org-admin/categories`;
+      const response = await fetch(endpoint, {
+        method: editCat ? 'PUT' : 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: cat.name,
+          description: cat.description,
+          fields: cat.fields,
+        }),
+      });
+      if (!response.ok) {
+        let message = `Failed to ${editCat ? 'update' : 'create'} category (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // Keep status-only message.
+        }
+        throw new Error(message);
+      }
+      await loadCategories();
+      setShowModal(false);
+      setEditCat(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save category');
+    } finally {
+      setActionLoading(false);
     }
-    setShowModal(false);
-    setEditCat(null);
   };
 
-  const handleDelete = (id: string) => {
-    setCategories((prev) => prev.filter((c) => c.id !== id));
-    setDeleteConfirm(null);
+  const handleDelete = async (id: string) => {
+    try {
+      setActionLoading(true);
+      setError('');
+      const response = await fetch(`${API_BASE_URL}/protected/org-admin/categories/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        let message = `Failed to delete category (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // Keep status-only message.
+        }
+        throw new Error(message);
+      }
+      setCategories((prev) => prev.filter((c) => c.id !== id));
+      setDeleteConfirm(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete category');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   return (
@@ -147,13 +150,23 @@ export default function CategoriesPage() {
           Create Category
         </button>
       </div>
+      {loading && (
+        <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-500">
+          Loading categories...
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {[
+          {[
           { label: 'Total Categories', value: categories.length, icon: 'ri-folder-3-line', color: TEAL },
           { label: 'Total Documents', value: categories.reduce((a, c) => a + c.docCount, 0).toLocaleString(), icon: 'ri-file-text-line', color: '#16a34a' },
-          { label: 'Avg. Fields/Category', value: Math.round(categories.reduce((a, c) => a + c.fields.length, 0) / categories.length), icon: 'ri-list-settings-line', color: '#d97706' },
+          { label: 'Avg. Fields/Category', value: categories.length > 0 ? Math.round(categories.reduce((a, c) => a + c.fields.length, 0) / categories.length) : 0, icon: 'ri-list-settings-line', color: '#d97706' },
           { label: 'Total Metadata Fields', value: categories.reduce((a, c) => a + c.fields.length, 0), icon: 'ri-input-method-line', color: '#8b5cf6' },
         ].map((s) => (
           <div key={s.label} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
@@ -345,8 +358,8 @@ export default function CategoriesPage() {
               <p className="text-sm text-gray-400">This will permanently remove the category and its metadata configuration. Documents won't be deleted.</p>
             </div>
             <div className="flex gap-3 w-full">
-              <button onClick={() => setDeleteConfirm(null)} className="flex-1 px-4 py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors whitespace-nowrap">Cancel</button>
-              <button onClick={() => handleDelete(deleteConfirm)} className="flex-1 px-4 py-2.5 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors whitespace-nowrap">Delete</button>
+              <button disabled={actionLoading} onClick={() => setDeleteConfirm(null)} className="flex-1 px-4 py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors whitespace-nowrap disabled:opacity-60">Cancel</button>
+              <button disabled={actionLoading} onClick={() => handleDelete(deleteConfirm)} className="flex-1 px-4 py-2.5 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors whitespace-nowrap disabled:opacity-60">{actionLoading ? 'Deleting...' : 'Delete'}</button>
             </div>
           </div>
         </div>

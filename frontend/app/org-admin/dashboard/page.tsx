@@ -1,53 +1,99 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import styles from './page.module.css';
 
 const TEAL = '#0097B2';
 
-const statsCards = [
-  { label: 'Total Documents', value: '12,480', icon: 'ri-file-text-line', color: TEAL, change: '+3.2%' },
-  { label: 'Uploaded Today', value: '47', icon: 'ri-upload-cloud-2-line', color: '#16a34a', change: '+12 from yesterday' },
-  { label: 'Total Categories', value: '18', icon: 'ri-folder-3-line', color: '#d97706', change: '3 added this month' },
-  { label: 'Storage Used', value: '82%', icon: 'ri-hard-drive-2-line', color: '#ef4444', isStorage: true, used: 8.2, total: 10 },
-];
-
-const uploadActivity = [
-  { day: 'Mon', count: 34 },
-  { day: 'Tue', count: 58 },
-  { day: 'Wed', count: 42 },
-  { day: 'Thu', count: 71 },
-  { day: 'Fri', count: 63 },
-  { day: 'Sat', count: 19 },
-  { day: 'Sun', count: 12 },
-];
-
-const categoryDist = [
-  { name: 'Legal Contracts', count: 3240, color: TEAL },
-  { name: 'Financial Reports', count: 2810, color: '#16a34a' },
-  { name: 'HR Documents', count: 1950, color: '#d97706' },
-  { name: 'Compliance', count: 1620, color: '#8b5cf6' },
-  { name: 'Operations', count: 1380, color: '#ef4444' },
-  { name: 'Others', count: 1480, color: '#94a3b8' },
-];
-
-const recentUploads = [
-  { id: 'DOC-4821', name: 'Service Agreement – Apex Corp.pdf', category: 'Legal Contracts', uploadedBy: 'James Whitfield', date: '2026-04-10', status: 'Public' },
-  { id: 'DOC-4820', name: 'Q1 2026 Financial Summary.xlsx', category: 'Financial Reports', uploadedBy: 'Sarah Lin', date: '2026-04-10', status: 'Private' },
-  { id: 'DOC-4819', name: 'Employee Handbook v3.2.pdf', category: 'HR Documents', uploadedBy: 'Mark Torres', date: '2026-04-09', status: 'Private' },
-  { id: 'DOC-4818', name: 'ISO 27001 Audit Report.pdf', category: 'Compliance', uploadedBy: 'James Whitfield', date: '2026-04-09', status: 'Private' },
-  { id: 'DOC-4817', name: 'Vendor Contract – TechSupply.pdf', category: 'Legal Contracts', uploadedBy: 'Nina Patel', date: '2026-04-08', status: 'Public' },
-  { id: 'DOC-4816', name: 'Operations Manual 2026.pdf', category: 'Operations', uploadedBy: 'Sarah Lin', date: '2026-04-08', status: 'Public' },
-  { id: 'DOC-4815', name: 'Payroll Summary March 2026.xlsx', category: 'Financial Reports', uploadedBy: 'Mark Torres', date: '2026-04-07', status: 'Private' },
-  { id: 'DOC-4814', name: 'NDA – Westfield Partners.pdf', category: 'Legal Contracts', uploadedBy: 'James Whitfield', date: '2026-04-07', status: 'Private' },
-];
-
-const maxBar = Math.max(...uploadActivity.map((d) => d.count));
-const totalCatDocs = categoryDist.reduce((a, b) => a + b.count, 0);
+type DashboardResponse = {
+  organizationName: string;
+  stats: {
+    totalDocuments: number;
+    uploadedToday: number;
+    totalCategories: number;
+    storageUsedGb: number;
+    storageTotalGb: number;
+    storagePercent: number;
+  };
+  uploadActivity: Array<{ day: string; count: number }>;
+  categoryDist: Array<{ name: string; count: number }>;
+  recentUploads: Array<{
+    id: string;
+    name: string;
+    category: string;
+    uploadedBy: string;
+    date: string;
+    status: 'Public' | 'Private';
+  }>;
+};
 
 export default function OrgAdminDashboard() {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const [chartRange, setChartRange] = useState<'daily' | 'weekly'>('weekly');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
+
+  useEffect(() => {
+    const loadDashboard = async () => {
+      try {
+        setLoading(true);
+        setError('');
+        const response = await fetch(`${API_BASE_URL}/protected/org-admin/dashboard`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) {
+          let message = `Failed to load dashboard (${response.status})`;
+          try {
+            const body = (await response.json()) as { message?: string };
+            if (body?.message) message = `${message}: ${body.message}`;
+          } catch {
+            // keep status-only message
+          }
+          throw new Error(message);
+        }
+        const data = (await response.json()) as DashboardResponse;
+        setDashboard(data);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load dashboard');
+        setDashboard(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void loadDashboard();
+  }, [API_BASE_URL]);
+
+  const uploadActivity = dashboard?.uploadActivity ?? [];
+  const categoryDist = useMemo(() => {
+    const colors = [TEAL, '#16a34a', '#d97706', '#8b5cf6', '#ef4444', '#94a3b8'];
+    return (dashboard?.categoryDist ?? []).map((cat, idx) => ({
+      ...cat,
+      color: colors[idx % colors.length],
+    }));
+  }, [dashboard?.categoryDist]);
+  const recentUploads = dashboard?.recentUploads ?? [];
+  const maxBar = Math.max(1, ...uploadActivity.map((d) => d.count));
+  const totalCatDocs = Math.max(1, categoryDist.reduce((a, b) => a + b.count, 0));
+  const weeklyTotal = uploadActivity.reduce((sum, day) => sum + day.count, 0);
+
+  const statsCards = [
+    { label: 'Total Documents', value: String(dashboard?.stats.totalDocuments ?? 0), icon: 'ri-file-text-line', color: TEAL, change: 'Tenant scoped' },
+    { label: 'Uploaded Today', value: String(dashboard?.stats.uploadedToday ?? 0), icon: 'ri-upload-cloud-2-line', color: '#16a34a', change: 'Today' },
+    { label: 'Total Categories', value: String(dashboard?.stats.totalCategories ?? 0), icon: 'ri-folder-3-line', color: '#d97706', change: 'Tenant scoped' },
+    {
+      label: 'Storage Used',
+      value: `${dashboard?.stats.storagePercent ?? 0}%`,
+      icon: 'ri-hard-drive-2-line',
+      color: '#ef4444',
+      isStorage: true,
+      used: dashboard?.stats.storageUsedGb ?? 0,
+      total: dashboard?.stats.storageTotalGb ?? 1,
+    },
+  ] as const;
 
   return (
     <div className="p-6 space-y-6">
@@ -55,7 +101,9 @@ export default function OrgAdminDashboard() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="font-outfit font-bold text-2xl text-[#1a2340]">Dashboard</h1>
-          <p className="text-gray-400 text-sm mt-0.5">Welcome back, James — here's your organization overview</p>
+          <p className="text-gray-400 text-sm mt-0.5">
+            {loading ? 'Loading your organization overview...' : `Welcome back — ${dashboard?.organizationName ?? 'your organization'} overview`}
+          </p>
         </div>
         <Link
           href="/org-admin/upload-documents"
@@ -65,6 +113,11 @@ export default function OrgAdminDashboard() {
           Upload Document
         </Link>
       </div>
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -136,18 +189,23 @@ export default function OrgAdminDashboard() {
                 <span className="text-[10px] text-gray-400">{d.day}</span>
               </div>
             ))}
+            {uploadActivity.length === 0 && (
+              <div className="w-full h-full flex items-center justify-center text-sm text-gray-400">
+                No upload activity yet
+              </div>
+            )}
           </div>
           <div className="mt-4 pt-4 border-t border-gray-100 flex items-center gap-6">
             <div>
-              <div className="text-lg font-bold text-[#1a2340]">299</div>
+              <div className="text-lg font-bold text-[#1a2340]">{weeklyTotal}</div>
               <div className="text-xs text-gray-400">This week</div>
             </div>
             <div>
-              <div className="text-lg font-bold text-[#1a2340]">1,240</div>
+              <div className="text-lg font-bold text-[#1a2340]">{dashboard?.stats.totalDocuments ?? 0}</div>
               <div className="text-xs text-gray-400">This month</div>
             </div>
             <div className="ml-auto">
-              <span className="text-xs font-medium text-[#16a34a] bg-[#16a34a]/10 px-2 py-1 rounded-full">+18% vs last week</span>
+              <span className="text-xs font-medium text-[#16a34a] bg-[#16a34a]/10 px-2 py-1 rounded-full">Tenant scoped</span>
             </div>
           </div>
         </div>

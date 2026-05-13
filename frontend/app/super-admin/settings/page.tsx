@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 interface AdminUser {
   id: string;
@@ -25,6 +25,7 @@ const avatarColors: Record<string, string> = {
 };
 
 export default function AdminSettingsPage() {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const [activeSection, setActiveSection] = useState<'profile' | 'security' | 'admins'>('profile');
   const [admins, setAdmins] = useState<AdminUser[]>(initAdmins);
   const [showAddAdmin, setShowAddAdmin] = useState(false);
@@ -32,24 +33,124 @@ export default function AdminSettingsPage() {
 
   const [profile, setProfile] = useState({ name: 'Sarah Chen', email: 'sarah.chen@custodox.io', phone: '+1 (555) 100-2200', timezone: 'UTC-5 (Eastern Time)' });
   const [profileSaved, setProfileSaved] = useState(false);
+  const [loadingProfile, setLoadingProfile] = useState(false);
 
   const [passwords, setPasswords] = useState({ current: '', newPass: '', confirm: '' });
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [passwordSaved, setPasswordSaved] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const [newAdmin, setNewAdmin] = useState({ name: '', email: '', role: 'Admin' as 'Super Admin' | 'Admin' });
 
-  const handleSaveProfile = () => {
-    setProfileSaved(true);
-    setTimeout(() => setProfileSaved(false), 2500);
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        setLoadingProfile(true);
+        setError('');
+        const response = await fetch(`${API_BASE_URL}/super-admin/settings/profile`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load profile (${response.status})`);
+        }
+        const data = (await response.json()) as {
+          firstName?: string;
+          lastName?: string;
+          email?: string;
+          phone?: string;
+        };
+        setProfile((prev) => ({
+          ...prev,
+          name: `${data.firstName ?? ''} ${data.lastName ?? ''}`.trim() || prev.name,
+          email: data.email ?? prev.email,
+          phone: data.phone ?? prev.phone,
+        }));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load profile');
+      } finally {
+        setLoadingProfile(false);
+      }
+    };
+    void loadProfile();
+  }, [API_BASE_URL]);
+
+  const handleSaveProfile = async () => {
+    try {
+      setActionLoading(true);
+      setError('');
+      const parts = profile.name.trim().split(/\s+/).filter(Boolean);
+      const firstName = parts[0] ?? '';
+      const lastName = parts.slice(1).join(' ');
+      const response = await fetch(`${API_BASE_URL}/super-admin/settings/profile`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName,
+          lastName,
+          email: profile.email,
+          phone: profile.phone,
+          language: 'English',
+          role: 'SUPER_ADMIN',
+          bio: '',
+        }),
+      });
+      if (!response.ok) {
+        let message = `Failed to save profile (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save profile');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
-  const handleSavePassword = () => {
+  const handleSavePassword = async () => {
     if (!passwords.current || !passwords.newPass || passwords.newPass !== passwords.confirm) return;
-    setPasswordSaved(true);
-    setPasswords({ current: '', newPass: '', confirm: '' });
-    setTimeout(() => setPasswordSaved(false), 2500);
+    try {
+      setActionLoading(true);
+      setError('');
+      const response = await fetch(`${API_BASE_URL}/super-admin/settings/change-password`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: passwords.current,
+          newPassword: passwords.newPass,
+          confirmPassword: passwords.confirm,
+        }),
+      });
+      if (!response.ok) {
+        let message = `Failed to update password (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+      setPasswordSaved(true);
+      setPasswords({ current: '', newPass: '', confirm: '' });
+      setTimeout(() => setPasswordSaved(false), 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update password');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleAddAdmin = () => {
@@ -80,6 +181,16 @@ export default function AdminSettingsPage() {
         <h1 className="font-outfit font-bold text-2xl text-brand-navy">Admin Settings</h1>
         <p className="text-brand-muted text-sm mt-0.5">Manage your account and admin access</p>
       </div>
+      {loadingProfile && (
+        <div className="rounded-lg border border-brand-border bg-white px-4 py-3 text-sm text-brand-muted">
+          Loading settings...
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
 
       <div className="flex flex-col lg:flex-row gap-6">
         {/* Sidebar nav */}
@@ -166,9 +277,10 @@ export default function AdminSettingsPage() {
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                 <button
                   onClick={handleSaveProfile}
-                  className="w-full sm:w-auto px-5 py-2 bg-[#0097B2] text-white rounded-lg text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap"
+                  disabled={actionLoading}
+                  className="w-full sm:w-auto px-5 py-2 bg-[#0097B2] text-white rounded-lg text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap disabled:opacity-60"
                 >
-                  Save Changes
+                  {actionLoading ? 'Saving...' : 'Save Changes'}
                 </button>
                 {profileSaved && (
                   <div className="flex items-center gap-2 text-[#16a34a] text-sm">
@@ -186,18 +298,37 @@ export default function AdminSettingsPage() {
                 <h2 className="font-outfit font-semibold text-brand-navy">Change Password</h2>
                 <p className="text-sm text-brand-muted">Keep your account secure with a strong password</p>
               </div>
-              <div className="space-y-4 max-w-md">
+              <form autoComplete="off" className="space-y-4 max-w-md">
+                {/* Decoy fields to absorb browser/password-manager autofill */}
+                <input
+                  type="text"
+                  name="username"
+                  autoComplete="username"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  className="hidden"
+                />
+                <input
+                  type="password"
+                  name="password"
+                  autoComplete="new-password"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  className="hidden"
+                />
                 <div>
                   <label className="block text-xs font-medium text-brand-muted mb-1.5">Current Password</label>
                   <div className="relative">
                     <input
                       type={showCurrent ? 'text' : 'password'}
+                      name="current_password_input"
                       value={passwords.current}
                       onChange={(e) => setPasswords((p) => ({ ...p, current: e.target.value }))}
+                      autoComplete="current-password"
                       className="w-full px-3 py-2 pr-10 border border-brand-border rounded-lg text-sm focus:outline-none focus:border-[#0097B2] transition-colors"
                       placeholder="Enter current password"
                     />
-                    <button onClick={() => setShowCurrent(!showCurrent)} title={showCurrent ? 'Hide current password' : 'Show current password'} className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-muted hover:text-brand-navy">
+                    <button type="button" onClick={() => setShowCurrent(!showCurrent)} title={showCurrent ? 'Hide current password' : 'Show current password'} className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-muted hover:text-brand-navy">
                       <i className={showCurrent ? 'ri-eye-off-line' : 'ri-eye-line'} />
                     </button>
                   </div>
@@ -207,8 +338,10 @@ export default function AdminSettingsPage() {
                   <div className="relative">
                     <input
                       type={showNew ? 'text' : 'password'}
+                      name="new_password_input"
                       value={passwords.newPass}
                       onChange={(e) => setPasswords((p) => ({ ...p, newPass: e.target.value }))}
+                      autoComplete="new-password"
                       className="w-full px-3 py-2 pr-10 border border-brand-border rounded-lg text-sm focus:outline-none focus:border-[#0097B2] transition-colors"
                       placeholder="Enter new password"
                     />
@@ -231,8 +364,10 @@ export default function AdminSettingsPage() {
                   <label className="block text-xs font-medium text-brand-muted mb-1.5">Confirm New Password</label>
                   <input
                     type="password"
+                    name="confirm_new_password_input"
                     value={passwords.confirm}
                     onChange={(e) => setPasswords((p) => ({ ...p, confirm: e.target.value }))}
+                    autoComplete="new-password"
                     className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none transition-colors ${
                       passwords.confirm && passwords.confirm !== passwords.newPass ? 'border-red-400 focus:border-red-400' : 'border-brand-border focus:border-[#0097B2]'
                     }`}
@@ -242,14 +377,14 @@ export default function AdminSettingsPage() {
                     <p className="text-xs text-red-500 mt-1">Passwords do not match</p>
                   )}
                 </div>
-              </div>
+              </form>
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                 <button
                   onClick={handleSavePassword}
-                  disabled={!passwords.current || !passwords.newPass || passwords.newPass !== passwords.confirm}
+                  disabled={actionLoading || !passwords.current || !passwords.newPass || passwords.newPass !== passwords.confirm}
                   className="w-full sm:w-auto px-5 py-2 bg-[#0097B2] text-white rounded-lg text-sm font-medium hover:bg-[#007a91] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                 >
-                  Update Password
+                  {actionLoading ? 'Updating...' : 'Update Password'}
                 </button>
                 {passwordSaved && (
                   <div className="flex items-center gap-2 text-[#16a34a] text-sm">

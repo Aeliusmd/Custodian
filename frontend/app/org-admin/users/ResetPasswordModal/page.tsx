@@ -8,7 +8,7 @@ const TEAL = '#0097B2';
 interface ResetPasswordModalProps {
   user?: OrgUser | null;
   onClose?: () => void;
-  onReset?: () => void;
+  onReset?: (newPassword: string) => void;
 }
 
 export default function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModalProps) {
@@ -34,7 +34,7 @@ export default function ResetPasswordModal({ user, onClose, onReset }: ResetPass
 
   const handleReset = () => {
     if (!validate()) return;
-    onReset();
+    onReset(newPassword);
   };
 
   return (

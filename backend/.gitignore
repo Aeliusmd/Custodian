@@ -1,0 +1,16 @@
+# Secrets; commit .env.example
+.env*
+!.env.example
+
+dist
+node_modules
+.DS_Store
+Thumbs.db
+
+# Uploads, OCR cache, previews
+storage/
+
+logs/
+*.log
+
+*.traineddata

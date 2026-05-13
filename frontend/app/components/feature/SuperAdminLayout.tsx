@@ -34,12 +34,14 @@ type SuperAdminLayoutProps = {
 };
 
 export default function SuperAdminLayout({ children }: SuperAdminLayoutProps) {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const [collapsed, setCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
   const [search, setSearch] = useState('');
+  const [sessionUser, setSessionUser] = useState<{ fullName: string; email: string; role: string } | null>(null);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -49,6 +51,37 @@ export default function SuperAdminLayout({ children }: SuperAdminLayoutProps) {
   useEffect(() => {
     setMobileSidebarOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/auth/session`, {
+      method: 'GET',
+      credentials: 'include',
+    })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return (await res.json()) as { user?: { fullName?: string; email?: string; role?: string } };
+      })
+      .then((data) => {
+        if (!data?.user) return;
+        setSessionUser({
+          fullName: data.user.fullName ?? 'Super Admin',
+          email: data.user.email ?? '',
+          role: data.user.role ?? 'SUPER_ADMIN',
+        });
+      })
+      .catch(() => {
+        // Keep layout usable with static fallback labels.
+      });
+  }, [API_BASE_URL]);
+
+  const displayName = sessionUser?.fullName?.trim() || 'Super Admin';
+  const displayRole = sessionUser?.role === 'SUPER_ADMIN' ? 'Super Admin' : (sessionUser?.role ?? 'Super Admin');
+  const initials = displayName
+    .split(' ')
+    .filter(Boolean)
+    .map((n) => n[0]?.toUpperCase())
+    .join('')
+    .slice(0, 2) || 'SA';
 
   const handleSignOut = () => {
     setShowSignOutModal(false);
@@ -138,12 +171,12 @@ export default function SuperAdminLayout({ children }: SuperAdminLayoutProps) {
         <div className="border-t border-gray-100 py-3 px-2">
           <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer hover:bg-gray-50 transition-all ${collapsed ? 'justify-center' : ''}`}>
             <div className="w-7 h-7 rounded-full bg-[#0097B2] flex items-center justify-center flex-shrink-0">
-              <span className="text-white text-xs font-bold">SC</span>
+              <span className="text-white text-xs font-bold">{initials}</span>
             </div>
             {!collapsed && (
               <div className="min-w-0">
-                <div className="text-xs font-semibold text-brand-navy truncate">Sarah Chen</div>
-                <div className="text-[10px] text-[#0097B2] truncate font-medium">Super Admin</div>
+                <div className="text-xs font-semibold text-brand-navy truncate">{displayName}</div>
+                <div className="text-[10px] text-[#0097B2] truncate font-medium">{displayRole}</div>
               </div>
             )}
           </div>
@@ -230,16 +263,16 @@ export default function SuperAdminLayout({ children }: SuperAdminLayoutProps) {
               className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 transition-all"
             >
               <div className="w-7 h-7 rounded-full bg-[#0097B2] flex items-center justify-center">
-                <span className="text-white text-xs font-bold">SC</span>
+                <span className="text-white text-xs font-bold">{initials}</span>
               </div>
-              <span className="text-sm font-medium text-brand-navy hidden md:block">Sarah Chen</span>
+              <span className="text-sm font-medium text-brand-navy hidden md:block">{displayName}</span>
               <i className="ri-arrow-down-s-line text-gray-400 text-sm" />
             </button>
             {showUserMenu && (
               <div className="absolute right-0 top-10 w-48 bg-white border border-gray-200 rounded-xl overflow-hidden z-50">
                 <div className="px-4 py-3 border-b border-gray-100">
-                  <div className="text-sm font-semibold text-brand-navy">Sarah Chen</div>
-                  <div className="text-xs text-[#0097B2]">Super Admin</div>
+                  <div className="text-sm font-semibold text-brand-navy">{displayName}</div>
+                  <div className="text-xs text-[#0097B2]">{displayRole}</div>
                 </div>
                 <Link href="/super-admin/settings" onClick={() => setShowUserMenu(false)} className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50 hover:text-brand-navy transition-colors">
                   <i className="ri-user-line" />
