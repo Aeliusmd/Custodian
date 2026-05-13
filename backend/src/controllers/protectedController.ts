@@ -145,7 +145,10 @@ const mapUiStatusToDbStatus = (status: string): "active" | "inactive" =>
 const mapDbStatusToUiStatus = (status: string): "Active" | "Inactive" =>
   status.toLowerCase() === "active" ? "Active" : "Inactive";
 
-const listDocumentsFromTenant = async (dbName: string, archived: boolean) => {
+const listDocumentsFromTenant = async (dbName: string, archived: boolean, uploadedBy?: string) => {
+  const params: unknown[] = [archived ? "archived" : "active"];
+  const userFilter = uploadedBy ? `AND d.uploaded_by = ?` : "";
+  if (uploadedBy) params.push(uploadedBy);
   const [rows] = await dbPool.query(
     `SELECT d.id, d.doc_code, d.name, d.visibility, d.created_at, d.updated_at, d.file_path, d.file_size_kb, d.file_type, d.status,
             COALESCE(c.name, 'Uncategorized') AS category_name,
@@ -154,8 +157,9 @@ const listDocumentsFromTenant = async (dbName: string, archived: boolean) => {
        LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
        LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
       WHERE d.status = ?
+        ${userFilter}
       ORDER BY d.created_at DESC`,
-    [archived ? "archived" : "active"],
+    params,
   );
   const docs = rows as Array<{
     id: string;
@@ -988,6 +992,19 @@ export const protectedController = {
       if (!dbName) return res.status(404).json({ message: "Organization not found" });
       const archived = asString(req.query.archived) === "1";
       const docs = await listDocumentsFromTenant(dbName, archived);
+      return res.status(200).json(docs);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load documents";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async listUserDocuments(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const archived = asString(req.query.archived) === "1";
+      const docs = await listDocumentsFromTenant(dbName, archived, req.user?.id);
       return res.status(200).json(docs);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load documents";

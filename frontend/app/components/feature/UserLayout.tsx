@@ -6,25 +6,27 @@ import { ReactNode, useState } from 'react';
 
 const TEAL = '#0097B2';
 
-const navItems = [
-  { path: '/user/dashboard', label: 'Dashboard', icon: 'ri-dashboard-line' },
-  { path: '/user/upload-documents', label: 'Upload Documents', icon: 'ri-upload-cloud-2-line' },
-  { path: '/user/documents', label: 'All Documents', icon: 'ri-file-list-3-line' },
-  { path: '/user/search', label: 'Global Search', icon: 'ri-search-line' },
-  { path: '/user/advanced-search', label: 'Advanced Search', icon: 'ri-search-eye-line' },
-  { path: '/user/settings/profile', label: 'Settings', icon: 'ri-settings-3-line' },
-];
-
 type UserLayoutProps = {
   children: ReactNode;
+  userId: string;
 };
 
-export default function UserLayout({ children }: UserLayoutProps) {
+export default function UserLayout({ children, userId }: UserLayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const pathname = usePathname();
   const router = useRouter();
+
+  const base = `/user/${userId}`;
+  const navItems = [
+    { path: `${base}/dashboard`, label: 'Dashboard', icon: 'ri-dashboard-line' },
+    { path: `${base}/upload-documents`, label: 'Upload Documents', icon: 'ri-upload-cloud-2-line' },
+    { path: `${base}/documents`, label: 'All Documents', icon: 'ri-file-list-3-line' },
+    { path: `${base}/search`, label: 'Global Search', icon: 'ri-search-line' },
+    { path: `${base}/advanced-search`, label: 'Advanced Search', icon: 'ri-search-eye-line' },
+    { path: `${base}/settings/profile`, label: 'Settings', icon: 'ri-settings-3-line' },
+  ];
 
   const toggleSidebar = () => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {

@@ -29,6 +29,8 @@ yarn-error.log*
 
 # Claude
 .claude/
+CLAUDE.md
+docs/
 
 # Package locks (use workspace-level)
 package-lock.json
