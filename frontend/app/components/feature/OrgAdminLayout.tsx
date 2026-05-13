@@ -37,7 +37,7 @@ type OrgAdminLayoutProps = {
 };
 
 export default function OrgAdminLayout({ children }: OrgAdminLayoutProps) {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);

@@ -1,11 +1,31 @@
 import type { Request, Response } from "express";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import { existsSync } from "fs";
+import { readFile } from "fs/promises";
+import path from "path";
 import { dbPool } from "../config/db";
 import { env } from "../config/env";
-import crypto from "crypto";
+import { enqueueDocumentOcr } from "../services/documentOcrQueue";
+import { absoluteFromStorageRoot, previewPageRelativePath, unlinkQuiet, writeUploadedDocumentFile } from "../services/documentStorageService";
+import { sanitizeStoredFileName } from "../utils/uploadFileName";
 
 const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
+
+/** Multer / append-field may store values as string, string[], or Buffer. */
+const firstMultipartField = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    const first = value[0];
+    if (typeof first === "string") return first;
+    if (Buffer.isBuffer(first)) return first.toString("utf8");
+    return "";
+  }
+  if (Buffer.isBuffer(value)) return value.toString("utf8");
+  if (value != null && typeof value !== "object") return String(value);
+  return "";
+};
 
 const toCategoryFieldType = (value: unknown): string => {
   const v = asString(value).trim().toLowerCase();
@@ -58,6 +78,111 @@ const ensureTenantCategoriesSoftDeleteColumn = async (dbName: string): Promise<v
          ADD COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0`,
     );
   }
+};
+
+const ensureTenantDocumentsOcrColumn = async (dbName: string): Promise<void> => {
+  const [rows] = await dbPool.query(
+    `SELECT 1
+       FROM information_schema.columns
+      WHERE table_schema = ?
+        AND table_name = 'documents'
+        AND column_name = 'ocr_text_path'
+      LIMIT 1`,
+    [dbName],
+  );
+  const exists = (rows as Array<{ 1: number }>).length > 0;
+  if (!exists) {
+    await dbPool.query(
+      `ALTER TABLE \`${dbName}\`.documents
+         ADD COLUMN ocr_text_path VARCHAR(512) NULL`,
+    );
+  }
+};
+
+const ensureTenantDocumentsOcrStatusColumn = async (dbName: string): Promise<void> => {
+  const [rows] = await dbPool.query(
+    `SELECT 1
+       FROM information_schema.columns
+      WHERE table_schema = ?
+        AND table_name = 'documents'
+        AND column_name = 'ocr_status'
+      LIMIT 1`,
+    [dbName],
+  );
+  const exists = (rows as Array<{ 1: number }>).length > 0;
+  if (!exists) {
+    await dbPool.query(
+      `ALTER TABLE \`${dbName}\`.documents
+         ADD COLUMN ocr_status ENUM('none','pending','ready','failed') NOT NULL DEFAULT 'none'`,
+    );
+  }
+};
+
+const ensureTenantDocumentsPreviewPageCountColumn = async (dbName: string): Promise<void> => {
+  const [rows] = await dbPool.query(
+    `SELECT 1
+       FROM information_schema.columns
+      WHERE table_schema = ?
+        AND table_name = 'documents'
+        AND column_name = 'preview_page_count'
+      LIMIT 1`,
+    [dbName],
+  );
+  const exists = (rows as Array<{ 1: number }>).length > 0;
+  if (!exists) {
+    await dbPool.query(
+      `ALTER TABLE \`${dbName}\`.documents
+         ADD COLUMN preview_page_count INT NOT NULL DEFAULT 0`,
+    );
+  }
+};
+
+const ensureTenantDocumentsOcrSchema = async (dbName: string): Promise<void> => {
+  await ensureTenantDocumentsOcrColumn(dbName);
+  await ensureTenantDocumentsOcrStatusColumn(dbName);
+  await ensureTenantDocumentsPreviewPageCountColumn(dbName);
+};
+
+const mapDbOcrStatusToApi = (value: string | null | undefined): "None" | "Pending" | "Ready" | "Failed" => {
+  const v = (value ?? "none").toLowerCase();
+  if (v === "pending") return "Pending";
+  if (v === "failed") return "Failed";
+  if (v === "ready") return "Ready";
+  return "None";
+};
+
+const MAX_OCR_SNIPPET_CHARS = 500_000;
+
+const isPathWithinStorageRoot = (storageRoot: string, candidateAbsolute: string): boolean => {
+  const root = path.resolve(storageRoot);
+  const abs = path.resolve(candidateAbsolute);
+  const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
+  return abs === root || abs.startsWith(rootWithSep);
+};
+
+const mimeTypeForDocumentFile = (fileName: string, absoluteFallback: string): string => {
+  const ext = path.extname(fileName).toLowerCase() || path.extname(absoluteFallback).toLowerCase();
+  const map: Record<string, string> = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".txt": "text/plain",
+    ".csv": "text/csv",
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".json": "application/json",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".zip": "application/zip",
+  };
+  return map[ext] ?? "application/octet-stream";
 };
 
 const listCategoriesFromTenant = async (dbName: string) => {
@@ -145,21 +270,19 @@ const mapUiStatusToDbStatus = (status: string): "active" | "inactive" =>
 const mapDbStatusToUiStatus = (status: string): "Active" | "Inactive" =>
   status.toLowerCase() === "active" ? "Active" : "Inactive";
 
-const listDocumentsFromTenant = async (dbName: string, archived: boolean, uploadedBy?: string) => {
-  const params: unknown[] = [archived ? "archived" : "active"];
-  const userFilter = uploadedBy ? `AND d.uploaded_by = ?` : "";
-  if (uploadedBy) params.push(uploadedBy);
+const listDocumentsFromTenant = async (dbName: string, archived: boolean) => {
+  await ensureTenantCategoriesSoftDeleteColumn(dbName);
+  await ensureTenantDocumentsOcrSchema(dbName);
   const [rows] = await dbPool.query(
-    `SELECT d.id, d.doc_code, d.name, d.visibility, d.created_at, d.updated_at, d.file_path, d.file_size_kb, d.file_type, d.status,
+    `SELECT d.id, d.doc_code, d.name, d.visibility, d.created_at, d.updated_at, d.file_path, d.ocr_text_path, d.ocr_status, d.file_size_kb, d.file_type, d.status, d.preview_page_count,
             COALESCE(c.name, 'Uncategorized') AS category_name,
             COALESCE(u.name, 'Unknown') AS uploaded_by
        FROM \`${dbName}\`.documents d
        LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
        LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
       WHERE d.status = ?
-        ${userFilter}
       ORDER BY d.created_at DESC`,
-    params,
+    [archived ? "archived" : "active"],
   );
   const docs = rows as Array<{
     id: string;
@@ -169,9 +292,12 @@ const listDocumentsFromTenant = async (dbName: string, archived: boolean, upload
     created_at: Date;
     updated_at: Date;
     file_path: string | null;
+    ocr_text_path: string | null;
+    ocr_status: string;
     file_size_kb: number;
     file_type: string;
     status: string;
+    preview_page_count: number;
     category_name: string;
     uploaded_by: string;
   }>;
@@ -204,6 +330,9 @@ const listDocumentsFromTenant = async (dbName: string, archived: boolean, upload
     fileSize: d.file_size_kb >= 1024 ? `${(d.file_size_kb / 1024).toFixed(1)} MB` : `${d.file_size_kb} KB`,
     fileType: String(d.file_type || "FILE").toUpperCase(),
     filePath: d.file_path ?? "",
+    ocrTextPath: d.ocr_text_path ?? "",
+    ocrStatus: mapDbOcrStatusToApi(d.ocr_status),
+    previewPageCount: Math.max(0, Math.floor(Number(d.preview_page_count ?? 0))),
     metadata: metaMap.get(d.id) ?? {},
     versions: [
       {
@@ -218,8 +347,10 @@ const listDocumentsFromTenant = async (dbName: string, archived: boolean, upload
 };
 
 const getDocumentFromTenant = async (dbName: string, id: string) => {
+  await ensureTenantCategoriesSoftDeleteColumn(dbName);
+  await ensureTenantDocumentsOcrSchema(dbName);
   const [docs] = await dbPool.query(
-    `SELECT d.id, d.doc_code, d.name, d.visibility, d.created_at, d.updated_at, d.file_path, d.file_size_kb, d.file_type, d.status,
+    `SELECT d.id, d.doc_code, d.name, d.visibility, d.created_at, d.updated_at, d.file_path, d.ocr_text_path, d.ocr_status, d.file_size_kb, d.file_type, d.status, d.preview_page_count,
             COALESCE(c.name, 'Uncategorized') AS category_name,
             COALESCE(u.name, 'Unknown') AS uploaded_by
        FROM \`${dbName}\`.documents d
@@ -237,8 +368,11 @@ const getDocumentFromTenant = async (dbName: string, id: string) => {
     created_at: Date;
     updated_at: Date;
     file_path: string | null;
+    ocr_text_path: string | null;
+    ocr_status: string;
     file_size_kb: number;
     file_type: string;
+    preview_page_count: number;
     category_name: string;
     uploaded_by: string;
   }>)[0];
@@ -255,6 +389,23 @@ const getDocumentFromTenant = async (dbName: string, id: string) => {
     (metaRows as Array<{ field_name: string; value: string }>).map((m) => [m.field_name, m.value ?? ""]),
   );
 
+  let contentSnippet: string | undefined;
+  const ocrRel = asString(row.ocr_text_path).trim();
+  if (ocrRel) {
+    try {
+      const absOcr = absoluteFromStorageRoot(env.storageRoot, ocrRel);
+      if (isPathWithinStorageRoot(env.storageRoot, absOcr) && existsSync(absOcr)) {
+        const text = await readFile(absOcr, "utf8");
+        contentSnippet =
+          text.length > MAX_OCR_SNIPPET_CHARS
+            ? `${text.slice(0, MAX_OCR_SNIPPET_CHARS)}\n\n[Preview truncated…]`
+            : text;
+      }
+    } catch {
+      contentSnippet = undefined;
+    }
+  }
+
   return {
     id: row.id,
     name: row.name,
@@ -266,7 +417,11 @@ const getDocumentFromTenant = async (dbName: string, id: string) => {
     fileSize: row.file_size_kb >= 1024 ? `${(row.file_size_kb / 1024).toFixed(1)} MB` : `${row.file_size_kb} KB`,
     fileType: String(row.file_type || "FILE").toUpperCase(),
     filePath: row.file_path ?? "",
+    ocrTextPath: row.ocr_text_path ?? "",
+    ocrStatus: mapDbOcrStatusToApi(row.ocr_status),
+    previewPageCount: Math.max(0, Math.floor(Number(row.preview_page_count ?? 0))),
     metadata,
+    ...(contentSnippet !== undefined ? { contentSnippet } : {}),
     versions: [
       {
         id: `${row.id}-v1`,
@@ -614,32 +769,85 @@ export const protectedController = {
 
   async createOrgAdminSingleDocument(req: Request, res: Response) {
     const conn = await dbPool.getConnection();
+    const stagedAbsolutes: string[] = [];
+    let txStarted = false;
+    let committed = false;
     try {
       const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
       if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      await ensureTenantCategoriesSoftDeleteColumn(dbName);
+      await ensureTenantDocumentsOcrSchema(dbName);
+
+      let categoryId: string;
+      let displayName: string;
+      let safeStorageName: string;
+      let fileType: string;
+      let fileSizeKb: number;
+      let pageCount: number;
+      let visibility: "Public" | "Private";
+      let metadata: Record<string, string>;
+      let fileBuffer: Buffer | null = null;
 
       const body = (req.body ?? {}) as {
-        categoryId?: string;
-        fileName?: string;
-        fileType?: string;
-        fileSizeKb?: number;
-        pageCount?: number;
-        visibility?: "Public" | "Private";
-        metadata?: Record<string, string>;
+        categoryId?: unknown;
+        fileName?: unknown;
+        fileBase64?: unknown;
+        fileType?: unknown;
+        fileSizeKb?: unknown;
+        pageCount?: unknown;
+        visibility?: unknown;
+        metadata?: unknown;
       };
+      categoryId = asString(body.categoryId).trim();
 
-      const categoryId = asString(body.categoryId).trim();
-      const fileName = asString(body.fileName).trim();
-      const fileType = asString(body.fileType).trim() || "unknown";
-      const fileSizeKb = Number(body.fileSizeKb ?? 0);
-      const pageCount = Number(body.pageCount ?? 0);
-      const visibility = body.visibility === "Public" ? "Public" : "Private";
-      const metadata = body.metadata ?? {};
+      const rawB64 = asString(body.fileBase64).trim();
+      let base64Payload = rawB64;
+      const comma = rawB64.indexOf(",");
+      if (rawB64.startsWith("data:") && comma !== -1) {
+        base64Payload = rawB64.slice(comma + 1);
+      }
+      if (base64Payload) {
+        try {
+          fileBuffer = Buffer.from(base64Payload, "base64");
+        } catch {
+          return res.status(400).json({ message: "Invalid file encoding" });
+        }
+        if (!fileBuffer.byteLength) {
+          return res.status(400).json({ message: "File payload is empty" });
+        }
+        const maxBytes = 52 * 1024 * 1024;
+        if (fileBuffer.byteLength > maxBytes) {
+          return res.status(413).json({ message: "File exceeds maximum upload size" });
+        }
+      }
+
+      const nameFromClient = asString(body.fileName).trim();
+      displayName = nameFromClient.slice(0, 200) || (fileBuffer ? "document" : "");
+      safeStorageName = sanitizeStoredFileName(nameFromClient || displayName || "document");
+      fileType = asString(body.fileType).trim() || "unknown";
+      fileSizeKb = Number(body.fileSizeKb ?? 0);
+      if (fileBuffer && (!Number.isFinite(fileSizeKb) || fileSizeKb <= 0)) {
+        fileSizeKb = Math.ceil(fileBuffer.byteLength / 1024);
+      }
+      pageCount = Number(body.pageCount ?? 0);
+      visibility = asString(body.visibility).trim() === "Public" ? "Public" : "Private";
+
+      const rawMeta = body.metadata;
+      if (rawMeta && typeof rawMeta === "object" && !Array.isArray(rawMeta)) {
+        metadata = rawMeta as Record<string, string>;
+      } else if (typeof rawMeta === "string") {
+        const s = rawMeta.trim();
+        try {
+          metadata = s ? (JSON.parse(s) as Record<string, string>) : {};
+        } catch {
+          return res.status(400).json({ message: "Invalid metadata JSON" });
+        }
+      } else {
+        metadata = {};
+      }
 
       if (!categoryId) return res.status(400).json({ message: "Category is required" });
-      if (!fileName) return res.status(400).json({ message: "File is required" });
-
-      await conn.beginTransaction();
+      if (!displayName) return res.status(400).json({ message: "File is required" });
 
       const [catRows] = await conn.query(
         `SELECT id
@@ -651,7 +859,6 @@ export const protectedController = {
       );
       const category = (catRows as Array<{ id: string }>)[0];
       if (!category?.id) {
-        await conn.rollback();
         return res.status(404).json({ message: "Category not found" });
       }
 
@@ -664,25 +871,43 @@ export const protectedController = {
       const fields = fieldRows as Array<{ id: string; is_required: number }>;
       for (const field of fields) {
         if (Number(field.is_required ?? 0) === 1 && !asString(metadata[field.id]).trim()) {
-          await conn.rollback();
           return res.status(400).json({ message: "Required metadata is missing" });
         }
       }
 
       const documentId = crypto.randomUUID();
       const docCode = buildDocCode();
-      const storedPath = `uploads/${documentId}-${fileName}`;
+      const storedPath = `uploads/${documentId}-${safeStorageName}`;
+      let mainAbsoluteForOcr: string | null = null;
+      const ocrStatusDb: "pending" | "none" = fileBuffer ? "pending" : "none";
+
+      if (fileBuffer) {
+        try {
+          const main = await writeUploadedDocumentFile(env.storageRoot, documentId, safeStorageName, fileBuffer);
+          stagedAbsolutes.push(main.absolutePath);
+          mainAbsoluteForOcr = main.absolutePath;
+        } catch (e) {
+          for (const p of stagedAbsolutes) await unlinkQuiet(p);
+          const message = e instanceof Error ? e.message : "Failed to store document file";
+          return res.status(400).json({ message });
+        }
+      }
+
+      await conn.beginTransaction();
+      txStarted = true;
+
       await conn.query(
         `INSERT INTO \`${dbName}\`.documents
-          (id, category_id, uploaded_by, doc_code, name, file_path, file_type, file_size_kb, page_count, visibility, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+          (id, category_id, uploaded_by, doc_code, name, file_path, ocr_text_path, ocr_status, file_type, file_size_kb, page_count, visibility, status)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'active')`,
         [
           documentId,
           categoryId,
           req.user?.id ?? "",
           docCode,
-          fileName,
+          displayName,
           storedPath,
+          ocrStatusDb,
           fileType,
           Number.isFinite(fileSizeKb) ? Math.max(0, Math.round(fileSizeKb)) : 0,
           Number.isFinite(pageCount) ? Math.max(0, Math.round(pageCount)) : 0,
@@ -701,14 +926,28 @@ export const protectedController = {
       }
 
       await conn.commit();
+      committed = true;
+      if (mainAbsoluteForOcr) {
+        enqueueDocumentOcr({
+          dbName,
+          documentId,
+          absoluteMainPath: mainAbsoluteForOcr,
+          safeStorageName,
+        });
+      }
       return res.status(201).json({
         id: documentId,
         docCode,
-        name: fileName,
+        name: displayName,
         visibility,
+        ocrTextPath: "",
+        ocrStatus: mapDbOcrStatusToApi(ocrStatusDb),
       });
     } catch (error) {
-      await conn.rollback();
+      if (txStarted) await conn.rollback().catch(() => {});
+      if (!committed) {
+        for (const p of stagedAbsolutes) await unlinkQuiet(p);
+      }
       const message = error instanceof Error ? error.message : "Failed to upload document";
       return res.status(400).json({ message });
     } finally {
@@ -885,6 +1124,178 @@ export const protectedController = {
     try {
       const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
       if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      await ensureTenantCategoriesSoftDeleteColumn(dbName);
+      await ensureTenantDocumentsOcrSchema(dbName);
+
+      const uploadFiles = (req as Request & { files?: Express.Multer.File[] }).files;
+      const multipartFiles = Array.isArray(uploadFiles) && uploadFiles.length > 0 ? uploadFiles : null;
+
+      if (multipartFiles) {
+        type ManifestEntry = {
+          fileType?: string;
+          fileSizeKb?: number;
+          pageCount?: number;
+          metadata?: Record<string, string>;
+        };
+        const categoryId = firstMultipartField(req.body?.categoryId).trim();
+        const visibility = firstMultipartField(req.body?.visibility) === "Public" ? "Public" : "Private";
+        const manifestRaw = firstMultipartField(req.body?.manifest).trim();
+        if (!categoryId) return res.status(400).json({ message: "Category is required" });
+        let manifest: ManifestEntry[];
+        try {
+          manifest = manifestRaw ? (JSON.parse(manifestRaw) as ManifestEntry[]) : [];
+        } catch {
+          return res.status(400).json({ message: "Invalid manifest JSON" });
+        }
+        if (!Array.isArray(manifest) || manifest.length === 0) {
+          return res.status(400).json({ message: "Manifest is required" });
+        }
+        if (manifest.length !== multipartFiles.length) {
+          return res.status(400).json({ message: "Each uploaded file must have matching manifest entries in order" });
+        }
+
+        const [catRows] = await conn.query(
+          `SELECT id
+             FROM \`${dbName}\`.categories
+            WHERE id = ?
+              AND is_deleted = 0
+            LIMIT 1`,
+          [categoryId],
+        );
+        const category = (catRows as Array<{ id: string }>)[0];
+        if (!category?.id) {
+          return res.status(404).json({ message: "Category not found" });
+        }
+
+        const [fieldRows] = await conn.query(
+          `SELECT id, is_required
+             FROM \`${dbName}\`.category_metadata_fields
+            WHERE category_id = ?`,
+          [categoryId],
+        );
+        const fields = fieldRows as Array<{ id: string; is_required: number }>;
+
+        for (let i = 0; i < multipartFiles.length; i += 1) {
+          const uf = multipartFiles[i]!;
+          const label = uf.originalname.trim() || `file_${i + 1}`;
+          const metadata = manifest[i]?.metadata ?? {};
+          for (const field of fields) {
+            if (Number(field.is_required ?? 0) === 1 && !asString(metadata[field.id]).trim()) {
+              return res.status(400).json({ message: `Required metadata missing for file ${label}` });
+            }
+          }
+        }
+
+        type Prepared = {
+          documentId: string;
+          docCode: string;
+          displayName: string;
+          storedPath: string;
+          absoluteMainPath: string;
+          safeStorageName: string;
+          fileType: string;
+          fileSizeKb: number;
+          pageCount: number;
+          metadata: Record<string, string>;
+        };
+
+        const stagedAbsolutes: string[] = [];
+        const prepared: Prepared[] = [];
+        try {
+          for (let i = 0; i < multipartFiles.length; i += 1) {
+            const uf = multipartFiles[i]!;
+            const m = manifest[i] ?? {};
+            const safeName = sanitizeStoredFileName(uf.originalname);
+            const displayName = uf.originalname.trim().slice(0, 200) || safeName;
+            const documentId = crypto.randomUUID();
+            const docCode = buildDocCode();
+            const main = await writeUploadedDocumentFile(env.storageRoot, documentId, safeName, uf.buffer);
+            stagedAbsolutes.push(main.absolutePath);
+            const fileType = asString(m.fileType).trim() || uf.mimetype || "unknown";
+            const fileSizeKb = Number.isFinite(Number(m.fileSizeKb))
+              ? Math.max(0, Math.round(Number(m.fileSizeKb)))
+              : Math.max(0, Math.ceil(uf.size / 1024));
+            const pageCount = Number.isFinite(Number(m.pageCount)) ? Math.max(0, Math.round(Number(m.pageCount))) : 0;
+            prepared.push({
+              documentId,
+              docCode,
+              displayName,
+              storedPath: main.relativePath,
+              absoluteMainPath: main.absolutePath,
+              safeStorageName: safeName,
+              fileType,
+              fileSizeKb,
+              pageCount,
+              metadata: typeof m.metadata === "object" && m.metadata ? m.metadata : {},
+            });
+          }
+        } catch (e) {
+          for (const p of stagedAbsolutes) await unlinkQuiet(p);
+          const message = e instanceof Error ? e.message : "Failed to store document files";
+          return res.status(400).json({ message });
+        }
+
+        let txStarted = false;
+        let committed = false;
+        try {
+          await conn.beginTransaction();
+          txStarted = true;
+          const created: Array<{ id: string; docCode: string; name: string; ocrTextPath: string; ocrStatus: string }> = [];
+          for (const p of prepared) {
+            await conn.query(
+              `INSERT INTO \`${dbName}\`.documents
+                (id, category_id, uploaded_by, doc_code, name, file_path, ocr_text_path, ocr_status, file_type, file_size_kb, page_count, visibility, status)
+               VALUES (?, ?, ?, ?, ?, ?, NULL, 'pending', ?, ?, ?, ?, 'active')`,
+              [
+                p.documentId,
+                categoryId,
+                req.user?.id ?? "",
+                p.docCode,
+                p.displayName,
+                p.storedPath,
+                p.fileType,
+                p.fileSizeKb,
+                p.pageCount,
+                visibility,
+              ],
+            );
+            for (const field of fields) {
+              const value = asString(p.metadata[field.id]).trim();
+              if (!value) continue;
+              await conn.query(
+                `INSERT INTO \`${dbName}\`.document_metadata_values (id, document_id, field_id, value)
+                 VALUES (?, ?, ?, ?)`,
+                [crypto.randomUUID(), p.documentId, field.id, value],
+              );
+            }
+            created.push({
+              id: p.documentId,
+              docCode: p.docCode,
+              name: p.displayName,
+              ocrTextPath: "",
+              ocrStatus: "Pending",
+            });
+          }
+          await conn.commit();
+          committed = true;
+          for (const p of prepared) {
+            enqueueDocumentOcr({
+              dbName,
+              documentId: p.documentId,
+              absoluteMainPath: p.absoluteMainPath,
+              safeStorageName: p.safeStorageName,
+            });
+          }
+          return res.status(201).json({ uploaded: created.length, documents: created });
+        } catch (error) {
+          if (txStarted) await conn.rollback().catch(() => {});
+          if (!committed) {
+            for (const p of stagedAbsolutes) await unlinkQuiet(p);
+          }
+          const message = error instanceof Error ? error.message : "Failed to bulk upload documents";
+          return res.status(400).json({ message });
+        }
+      }
 
       const body = (req.body ?? {}) as {
         categoryId?: string;
@@ -944,11 +1355,12 @@ export const protectedController = {
         const fileType = asString(item.fileType).trim() || "unknown";
         const fileSizeKb = Number(item.fileSizeKb ?? 0);
         const pageCount = Number(item.pageCount ?? 0);
-        const storedPath = `uploads/${documentId}-${fileName}`;
+        const safeStorageName = sanitizeStoredFileName(fileName);
+        const storedPath = `uploads/${documentId}-${safeStorageName}`;
         await conn.query(
           `INSERT INTO \`${dbName}\`.documents
-            (id, category_id, uploaded_by, doc_code, name, file_path, file_type, file_size_kb, page_count, visibility, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+            (id, category_id, uploaded_by, doc_code, name, file_path, ocr_text_path, ocr_status, file_type, file_size_kb, page_count, visibility, status)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, 'none', ?, ?, ?, ?, 'active')`,
           [
             documentId,
             categoryId,
@@ -999,19 +1411,6 @@ export const protectedController = {
     }
   },
 
-  async listUserDocuments(req: Request, res: Response) {
-    try {
-      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
-      if (!dbName) return res.status(404).json({ message: "Organization not found" });
-      const archived = asString(req.query.archived) === "1";
-      const docs = await listDocumentsFromTenant(dbName, archived, req.user?.id);
-      return res.status(200).json(docs);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to load documents";
-      return res.status(500).json({ message });
-    }
-  },
-
   async getOrgAdminDocument(req: Request, res: Response) {
     try {
       const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
@@ -1023,6 +1422,90 @@ export const protectedController = {
       return res.status(200).json(doc);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load document";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async getOrgAdminDocumentPreview(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const id = asString(req.params.id).trim();
+      const pageRaw = asString(req.params.pageNum).trim();
+      if (!id) return res.status(400).json({ message: "Document id is required" });
+      const pageNum = Number.parseInt(pageRaw, 10);
+      if (!Number.isFinite(pageNum) || pageNum < 1) {
+        return res.status(400).json({ message: "Invalid page" });
+      }
+      await ensureTenantDocumentsOcrSchema(dbName);
+      const [rows] = await dbPool.query(
+        `SELECT preview_page_count
+           FROM \`${dbName}\`.documents
+          WHERE id = ?
+            AND status <> 'deleted'
+          LIMIT 1`,
+        [id],
+      );
+      const maxPage = Math.max(
+        0,
+        Math.floor(Number((rows as Array<{ preview_page_count: number }>)[0]?.preview_page_count ?? 0)),
+      );
+      if (maxPage < 1 || pageNum > maxPage) {
+        return res.status(404).json({ message: "Preview not found" });
+      }
+      const relative = previewPageRelativePath(id, pageNum);
+      const absolute = absoluteFromStorageRoot(env.storageRoot, relative);
+      if (!isPathWithinStorageRoot(env.storageRoot, absolute)) {
+        return res.status(400).json({ message: "Invalid path" });
+      }
+      if (!existsSync(absolute)) return res.status(404).json({ message: "Preview file missing" });
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      res.sendFile(absolute, (err) => {
+        if (err && !res.headersSent) res.status(500).json({ message: "Failed to send preview" });
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load preview";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async getOrgAdminDocumentFile(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const id = asString(req.params.id).trim();
+      if (!id) return res.status(400).json({ message: "Document id is required" });
+      const [rows] = await dbPool.query(
+        `SELECT d.name, d.file_path, d.file_type
+           FROM \`${dbName}\`.documents d
+          WHERE d.id = ?
+            AND d.status <> 'deleted'
+          LIMIT 1`,
+        [id],
+      );
+      const row = (rows as Array<{ name: string; file_path: string | null; file_type: string }>)[0];
+      const relative = asString(row?.file_path).trim();
+      if (!row || !relative) return res.status(404).json({ message: "File not found" });
+
+      const absolute = absoluteFromStorageRoot(env.storageRoot, relative);
+      if (!isPathWithinStorageRoot(env.storageRoot, absolute)) {
+        return res.status(400).json({ message: "Invalid path" });
+      }
+      if (!existsSync(absolute)) return res.status(404).json({ message: "File missing on disk" });
+
+      const mime = mimeTypeForDocumentFile(row.name, absolute);
+      res.setHeader("Content-Type", mime);
+      const safeName = row.name.replace(/[\r\n"]/g, "_").trim() || "document";
+      const asciiName = safeName.replace(/[^\x20-\x7E]/g, "_");
+      res.setHeader("Content-Disposition", `attachment; filename="${asciiName}"`);
+      res.sendFile(absolute, (err) => {
+        if (err && !res.headersSent) {
+          res.status(500).json({ message: "Failed to send file" });
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to download file";
       return res.status(500).json({ message });
     }
   },
@@ -1135,211 +1618,6 @@ export const protectedController = {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to delete document";
       return res.status(400).json({ message });
-    }
-  },
-
-  async userDashboard(req: Request, res: Response) {
-    try {
-      if (!req.user?.organizationId) {
-        return res.status(400).json({ message: "Organization context missing in session" });
-      }
-      const userId = req.user.id;
-
-      const [orgRows] = await dbPool.query(
-        `SELECT id, name, db_name, storage_used_gb, storage_limit_gb
-           FROM \`${env.mysqlDatabase}\`.organizations
-          WHERE id = ?
-            AND is_deleted = 0
-          LIMIT 1`,
-        [req.user.organizationId],
-      );
-      const org = (orgRows as Array<{
-        id: string;
-        name: string;
-        db_name: string | null;
-        storage_used_gb: number | null;
-        storage_limit_gb: number | null;
-      }>)[0];
-      if (!org?.db_name) return res.status(404).json({ message: "Organization not found" });
-
-      const dbName = org.db_name;
-      await ensureTenantCategoriesSoftDeleteColumn(dbName);
-
-      const [myUploadRows] = await dbPool.query(
-        `SELECT COUNT(*) AS total FROM \`${dbName}\`.documents WHERE uploaded_by = ? AND status <> 'deleted'`,
-        [userId],
-      );
-      const myUploads = Number((myUploadRows as Array<{ total: number }>)[0]?.total ?? 0);
-
-      const [sharedRows] = await dbPool.query(
-        `SELECT COUNT(*) AS total FROM \`${dbName}\`.documents WHERE uploaded_by <> ? AND visibility = 'Public' AND status <> 'deleted'`,
-        [userId],
-      );
-      const sharedWithMe = Number((sharedRows as Array<{ total: number }>)[0]?.total ?? 0);
-
-      const [weeklyRows] = await dbPool.query(
-        `SELECT DATE(created_at) AS day_date, COUNT(*) AS count
-           FROM \`${dbName}\`.documents
-          WHERE uploaded_by = ?
-            AND created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-            AND status <> 'deleted'
-          GROUP BY DATE(created_at)`,
-        [userId],
-      );
-      const weeklyMap = new Map(
-        (weeklyRows as Array<{ day_date: Date; count: number }>).map((r) => [toIsoDate(new Date(r.day_date)), Number(r.count)]),
-      );
-      const uploadActivity = Array.from({ length: 7 }).map((_, i) => {
-        const dt = new Date();
-        dt.setDate(dt.getDate() - (6 - i));
-        const iso = toIsoDate(dt);
-        return { day: dt.toLocaleDateString("en-US", { weekday: "short" }), count: weeklyMap.get(iso) ?? 0 };
-      });
-
-      const [categoryDistRows] = await dbPool.query(
-        `SELECT c.name, COUNT(d.id) AS count
-           FROM \`${dbName}\`.categories c
-           LEFT JOIN \`${dbName}\`.documents d
-             ON d.category_id = c.id
-            AND d.uploaded_by = ?
-            AND d.status <> 'deleted'
-          WHERE c.is_deleted = 0
-          GROUP BY c.id, c.name
-          ORDER BY count DESC, c.name ASC
-          LIMIT 6`,
-        [userId],
-      );
-      const categoryDist = (categoryDistRows as Array<{ name: string; count: number }>).map((r) => ({
-        name: r.name,
-        count: Number(r.count ?? 0),
-      }));
-
-      const [recentRows] = await dbPool.query(
-        `SELECT d.id, d.name, d.visibility, d.created_at,
-                COALESCE(c.name, 'Uncategorized') AS category_name,
-                COALESCE(u.name, 'Unknown') AS uploaded_by
-           FROM \`${dbName}\`.documents d
-           LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
-           LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
-          WHERE d.uploaded_by = ?
-            AND d.status <> 'deleted'
-          ORDER BY d.created_at DESC
-          LIMIT 6`,
-        [userId],
-      );
-      const recentDocs = (recentRows as Array<{
-        id: string;
-        name: string;
-        visibility: "Public" | "Private";
-        created_at: Date;
-        category_name: string;
-        uploaded_by: string;
-      }>).map((r) => ({
-        id: r.id,
-        name: r.name,
-        category: r.category_name,
-        uploadedBy: r.uploaded_by,
-        date: toIsoDate(new Date(r.created_at)),
-        status: r.visibility === "Public" ? "Public" : "Private",
-      }));
-
-      const [sharedDocsRows] = await dbPool.query(
-        `SELECT d.id, d.name, d.created_at,
-                COALESCE(c.name, 'Uncategorized') AS category_name,
-                COALESCE(u.name, 'Unknown') AS shared_by
-           FROM \`${dbName}\`.documents d
-           LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
-           LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
-          WHERE d.uploaded_by <> ?
-            AND d.visibility = 'Public'
-            AND d.status <> 'deleted'
-          ORDER BY d.created_at DESC
-          LIMIT 4`,
-        [userId],
-      );
-      const sharedDocs = (sharedDocsRows as Array<{
-        id: string;
-        name: string;
-        created_at: Date;
-        category_name: string;
-        shared_by: string;
-      }>).map((r) => ({
-        id: r.id,
-        name: r.name,
-        sharedBy: r.shared_by,
-        date: toIsoDate(new Date(r.created_at)),
-        category: r.category_name,
-      }));
-
-      const storageUsed = Number(org.storage_used_gb ?? 0);
-      const storageTotal = Math.max(1, Number(org.storage_limit_gb ?? 10));
-      const storagePct = Math.min(100, Math.round((storageUsed / storageTotal) * 100));
-      const thisWeekCount = uploadActivity.reduce((s, d) => s + d.count, 0);
-
-      return res.status(200).json({
-        userName: req.user.fullName ?? "User",
-        stats: {
-          myUploads,
-          sharedWithMe,
-          storageUsedGb: storageUsed,
-          storageTotalGb: storageTotal,
-          storagePercent: storagePct,
-          thisWeekCount,
-        },
-        uploadActivity,
-        categoryDist,
-        recentDocs,
-        sharedDocs,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to fetch user dashboard";
-      return res.status(500).json({ message });
-    }
-  },
-
-  async searchUserDocuments(req: Request, res: Response) {
-    try {
-      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
-      if (!dbName) return res.status(404).json({ message: "Organization not found" });
-
-      const q = asString(req.query.q).trim();
-      if (!q) return res.status(200).json([]);
-
-      const like = `%${q}%`;
-      const [rows] = await dbPool.query(
-        `SELECT d.id, d.name, d.created_at, d.uploaded_by AS uploaded_by_id,
-                COALESCE(c.name, 'Uncategorized') AS category_name,
-                COALESCE(u.name, 'Unknown') AS uploader_name
-           FROM \`${dbName}\`.documents d
-           LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
-           LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
-          WHERE d.status <> 'deleted'
-            AND (d.name LIKE ? OR c.name LIKE ?)
-          ORDER BY d.created_at DESC
-          LIMIT 30`,
-        [like, like],
-      );
-
-      const results = (rows as Array<{
-        id: string;
-        name: string;
-        created_at: Date;
-        category_name: string;
-        uploader_name: string;
-      }>).map((r) => ({
-        id: r.id,
-        documentName: r.name,
-        snippet: `Document matching "${q}" in ${r.category_name}`,
-        category: r.category_name,
-        uploadDate: toIsoDate(new Date(r.created_at)),
-        uploadedBy: r.uploader_name,
-        keywords: [q],
-      }));
-
-      return res.status(200).json(results);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to search documents";
-      return res.status(500).json({ message });
     }
   },
 

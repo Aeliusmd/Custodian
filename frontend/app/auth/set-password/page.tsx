@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-function SetPasswordContent() {
+export default function SetPasswordPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token") ?? "";
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3051";
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
   const [inviteInfo, setInviteInfo] = useState<{ email: string; organizationName: string } | null>(null);
   const [loadingInvite, setLoadingInvite] = useState(true);
@@ -165,22 +165,5 @@ function SetPasswordContent() {
         </Link>
       </div>
     </div>
-  );
-}
-
-export default function SetPasswordPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center bg-brand-bg p-4">
-          <div className="w-full max-w-md bg-white rounded-2xl border border-brand-border shadow-sm p-8">
-            <h1 className="text-xl font-semibold text-brand-navy text-center">Set Your Password</h1>
-            <p className="mt-6 text-sm text-brand-muted text-center">Loading invite...</p>
-          </div>
-        </div>
-      }
-    >
-      <SetPasswordContent />
-    </Suspense>
   );
 }

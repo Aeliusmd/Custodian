@@ -12,7 +12,7 @@ interface MetaValues {
 }
 
 export default function SingleUpload() {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const [categories, setCategories] = useState<Category[]>([]);
   const [step, setStep] = useState(0);
   const [selectedCatId, setSelectedCatId] = useState('');
@@ -80,33 +80,57 @@ export default function SingleUpload() {
     if (pickedFile) setFile(pickedFile);
   };
 
+  const readFileAsBase64 = (uploaded: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        if (typeof result !== 'string') {
+          reject(new Error('Could not read file'));
+          return;
+        }
+        const i = result.indexOf(',');
+        resolve(i >= 0 ? result.slice(i + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
+      reader.readAsDataURL(uploaded);
+    });
+
   const handleFinalUpload = async () => {
-    if (!selectedCat || !file) return;
+    if (!file) return;
+    if (!selectedCat || !selectedCat.id) {
+      setApiError('Please select a category before uploading.');
+      return;
+    }
     setUploading(true);
     setApiError('');
     try {
-      const payload = {
-        categoryId: selectedCat.id,
-        fileName: file.name,
-        fileType: file.type || file.name.split('.').pop() || 'unknown',
-        fileSizeKb: Math.ceil(file.size / 1024),
-        pageCount: 0,
-        visibility: privacy,
-        metadata: metaValues,
-      };
+      const fileBase64 = await readFileAsBase64(file);
       const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents/single`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          categoryId: String(selectedCat.id),
+          fileName: file.name,
+          fileBase64,
+          visibility: privacy,
+          metadata: metaValues,
+          fileType: file.type || file.name.split('.').pop() || 'unknown',
+          fileSizeKb: Math.ceil(file.size / 1024),
+          pageCount: 0,
+        }),
       });
       if (!response.ok) {
         let message = `Failed to upload (${response.status})`;
         try {
-          const body = (await response.json()) as { message?: string };
-          if (body?.message) message = `${message}: ${body.message}`;
+          const errBody = (await response.json()) as { message?: string };
+          if (errBody?.message) message = `${message}: ${errBody.message}`;
         } catch {
-          // Keep status-only message.
+          if (response.status === 413) {
+            message +=
+              ': The upload payload was too large for the server. Base64 JSON is bigger than the file itself—try a smaller file or ensure the API allows a large enough JSON body.';
+          }
         }
         throw new Error(message);
       }

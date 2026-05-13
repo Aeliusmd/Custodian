@@ -27,7 +27,7 @@ const emptyAdmin = (): AdminEntry => ({
 
 export default function CreateOrgModal({ org, onClose, onSave }: CreateOrgModalProps) {
   const isEdit = !!org;
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const [form, setForm] = useState({
     name: '',
     email: '',

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { type DocumentRecord } from '../../../mocks/documents';
 import EditMetadataModal from './modals/EditMetadataModal';
@@ -8,8 +8,48 @@ import ShareDocumentModal from './modals/ShareDocumentModal';
 import VersionHistoryModal from './modals/VersionHistoryModal';
 import DeleteDocumentModal from './modals/DeleteDocumentModal';
 import DocumentViewerModal from '@/app/components/feature/DocumentViewerModal';
+import { downloadOrgAdminDocumentFile } from './lib/documentFileDownload';
 
 const TEAL = '#0097B2';
+
+function OcrStatusBadge({ status }: { status?: DocumentRecord['ocrStatus'] }) {
+  if (status === 'Pending') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200/80 px-2.5 py-1 rounded-full whitespace-nowrap">
+        <i className="ri-loader-4-line animate-spin text-sm" aria-hidden />
+        Processing…
+      </span>
+    );
+  }
+  if (status === 'Failed') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-red-700 bg-red-50 border border-red-100 px-2.5 py-1 rounded-full whitespace-nowrap">
+        <i className="ri-error-warning-line" aria-hidden />
+        OCR failed
+      </span>
+    );
+  }
+  if (status === 'Ready') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap" title="Searchable text extracted">
+        <i className="ri-checkbox-circle-line text-emerald-600" aria-hidden />
+        Ready
+      </span>
+    );
+  }
+  if (status === 'None') {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 bg-gray-50 border border-gray-200/80 px-2.5 py-1 rounded-full whitespace-nowrap"
+        title="No searchable text in file (unsupported type, empty content, or OCR produced nothing). Check backend logs if unexpected."
+      >
+        <i className="ri-file-warning-line" aria-hidden />
+        No OCR text
+      </span>
+    );
+  }
+  return <span className="text-xs text-gray-300">—</span>;
+}
 
 type ModalType = 'edit' | 'share' | 'version' | 'delete' | null;
 
@@ -20,7 +60,7 @@ interface Toast {
 }
 
 export default function AllDocumentsPage() {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [viewerDoc, setViewerDoc] = useState<DocumentRecord | null>(null);
   const [search, setSearch] = useState('');
@@ -36,17 +76,21 @@ export default function AllDocumentsPage() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const toastIdRef = useRef(0);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-    const id = Date.now();
+    toastIdRef.current += 1;
+    const id = toastIdRef.current;
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
   };
 
-  const loadDocuments = async () => {
+  const loadDocuments = useCallback(async (opts?: { silent?: boolean }) => {
     try {
-      setLoading(true);
-      setError('');
+      if (!opts?.silent) {
+        setLoading(true);
+        setError('');
+      }
       const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents`, {
         method: 'GET',
         credentials: 'include',
@@ -65,16 +109,72 @@ export default function AllDocumentsPage() {
       const data = (await response.json()) as DocumentRecord[];
       setDocuments(data ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load documents');
-      setDocuments([]);
+      if (!opts?.silent) {
+        setError(e instanceof Error ? e.message : 'Failed to load documents');
+        setDocuments([]);
+      }
     } finally {
-      setLoading(false);
+      if (!opts?.silent) {
+        setLoading(false);
+      }
     }
-  };
+  }, [API_BASE_URL]);
 
   useEffect(() => {
-    void loadDocuments();
-  }, []);
+    queueMicrotask(() => void loadDocuments());
+  }, [loadDocuments]);
+
+  useEffect(() => {
+    const hasPending = documents.some((d) => d.ocrStatus === 'Pending');
+    if (!hasPending) return undefined;
+    const id = window.setInterval(() => {
+      void loadDocuments({ silent: true });
+    }, 4000);
+    return () => window.clearInterval(id);
+  }, [documents, loadDocuments]);
+
+  // While the viewer is open, keep refreshing until previews arrive.
+  useEffect(() => {
+    if (!viewerDoc?.id) return undefined;
+    const wantsPreview = (viewerDoc.previewPageCount ?? 0) <= 0;
+    const isProcessing = viewerDoc.ocrStatus === 'Pending';
+    if (!wantsPreview && !isProcessing) return undefined;
+
+    let stopped = false;
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(viewerDoc.id)}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) return;
+        const freshDoc = (await response.json()) as DocumentRecord;
+        // Avoid sync setState in effect body.
+        queueMicrotask(() => {
+          if (!stopped) setViewerDoc(freshDoc);
+        });
+      } catch {
+        // ignore transient failures
+      }
+    };
+
+    void tick();
+    const id = window.setInterval(() => void tick(), 2500);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
+  }, [API_BASE_URL, viewerDoc]);
+
+  const previewImageUrlForPage = useCallback(
+    (pageOneBased: number) => {
+      if (!viewerDoc?.id) return '';
+      return `${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(viewerDoc.id)}/preview/${pageOneBased}`;
+    },
+    [API_BASE_URL, viewerDoc],
+  );
 
   const activeDocuments = documents;
 
@@ -123,14 +223,14 @@ export default function AllDocumentsPage() {
         });
         if (!response.ok) {
           setViewerDoc(doc);
-          showToast(`Opened cached data for "${doc.name}"`, 'error');
+          showToast(`Could not refresh document details (${response.status}). Showing list data.`, 'error');
           return;
         }
         const freshDoc = (await response.json()) as DocumentRecord;
         setViewerDoc(freshDoc);
       } catch {
         setViewerDoc(doc);
-        showToast(`Failed to refresh "${doc.name}"`, 'error');
+        showToast(`Could not reach the server. Showing list data for "${doc.name}".`, 'error');
       }
     })();
   };
@@ -230,8 +330,8 @@ export default function AllDocumentsPage() {
   };
 
   const handleDownload = (doc: DocumentRecord) => {
-    showToast(`Downloading "${doc.name}"...`);
     setActiveMenu(null);
+    void downloadOrgAdminDocumentFile(API_BASE_URL, doc, (message, type) => showToast(message, type ?? 'success'));
   };
 
   const selectedDocs = documents.filter((d) => selected.has(d.id));
@@ -457,13 +557,14 @@ export default function AllDocumentsPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Visibility</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Upload Date</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Last Updated</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Text (OCR)</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap w-10"></th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-16 text-gray-400">
+                  <td colSpan={9} className="text-center py-16 text-gray-400">
                     <i className="ri-file-search-line text-3xl block mb-2" />
                     <p className="text-sm">No documents match your filters</p>
                   </td>
@@ -571,6 +672,9 @@ export default function AllDocumentsPage() {
                     </td>
                     <td className="px-4 py-3.5 text-sm text-gray-500 whitespace-nowrap">{doc.uploadDate}</td>
                     <td className="px-4 py-3.5 text-sm text-gray-500 whitespace-nowrap">{doc.lastUpdated}</td>
+                    <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
+                      <OcrStatusBadge status={doc.ocrStatus} />
+                    </td>
                     <td className="px-4 py-3.5">
                       <div className="relative" onClick={(e) => e.stopPropagation()}>
                         <button
@@ -695,7 +799,11 @@ export default function AllDocumentsPage() {
       )}
       {viewerDoc && (
         <DocumentViewerModal
+          key={`${viewerDoc.id}-${viewerDoc.previewPageCount ?? 0}`}
           doc={viewerDoc}
+          fileDownloadUrl={`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(viewerDoc.id)}/file`}
+          previewImageUrlForPage={previewImageUrlForPage}
+          onNotify={(message, type) => showToast(message, type)}
           onClose={() => setViewerDoc(null)}
           onOpenVersionHistory={() => {
             setViewerDoc(null);

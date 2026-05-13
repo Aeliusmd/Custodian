@@ -25,7 +25,7 @@ const avatarColors: Record<string, string> = {
 };
 
 export default function AdminSettingsPage() {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const [activeSection, setActiveSection] = useState<'profile' | 'security' | 'admins'>('profile');
   const [admins, setAdmins] = useState<AdminUser[]>(initAdmins);
   const [showAddAdmin, setShowAddAdmin] = useState(false);

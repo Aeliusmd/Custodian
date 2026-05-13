@@ -8,6 +8,8 @@ export interface DocumentVersion {
   isCurrent: boolean;
 }
 
+export type DocumentOcrStatus = 'None' | 'Pending' | 'Ready' | 'Failed';
+
 export interface DocumentRecord {
   id: string;
   name: string;
@@ -19,9 +21,13 @@ export interface DocumentRecord {
   fileSize: string;
   fileType: string;
   filePath?: string;
+  ocrTextPath?: string;
+  ocrStatus?: DocumentOcrStatus;
   metadata: Record<string, string>;
   versions: DocumentVersion[];
   contentSnippet?: string;
+  /** Stored rendered page images (PDF / image uploads); viewer uses `/preview/:n`. */
+  previewPageCount?: number;
   archivedBy?: string;
   archivedDate?: string;
 }

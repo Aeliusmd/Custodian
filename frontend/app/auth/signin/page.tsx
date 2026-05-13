@@ -7,7 +7,7 @@ import TwoFactorModal from "./TwoFactorModal";
 
 export default function SignIn() {
   const router = useRouter();
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3051";
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
   const [formData, setFormData] = useState({
     email: "",
     password: "",

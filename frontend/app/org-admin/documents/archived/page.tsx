@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import type { DocumentRecord } from '../../../../mocks/documents';
 import DocumentViewerModal from '@/app/components/feature/DocumentViewerModal';
@@ -14,7 +14,7 @@ interface Toast {
 }
 
 export default function ArchivedDocumentsPage() {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const router = useRouter();
   const [archivedDocs, setArchivedDocs] = useState<DocumentRecord[]>([]);
   const [search, setSearch] = useState('');
@@ -24,8 +24,9 @@ export default function ArchivedDocumentsPage() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const toastIdRef = useRef(0);
 
-  const loadArchived = async () => {
+  const loadArchived = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
@@ -43,14 +44,60 @@ export default function ArchivedDocumentsPage() {
     } finally {
       setLoading(false);
     }
-  };
-  useEffect(() => { void loadArchived(); }, []);
+  }, [API_BASE_URL]);
+
+  useEffect(() => {
+    queueMicrotask(() => void loadArchived());
+  }, [loadArchived]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-    const id = Date.now();
+    toastIdRef.current += 1;
+    const id = toastIdRef.current;
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
   };
+
+  const previewImageUrlForPage = useCallback(
+    (pageOneBased: number) => {
+      if (!viewerDoc?.id) return '';
+      return `${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(viewerDoc.id)}/preview/${pageOneBased}`;
+    },
+    [API_BASE_URL, viewerDoc],
+  );
+
+  // While the viewer is open, keep refreshing until previews arrive.
+  useEffect(() => {
+    if (!viewerDoc?.id) return undefined;
+    const wantsPreview = (viewerDoc.previewPageCount ?? 0) <= 0;
+    const isProcessing = viewerDoc.ocrStatus === 'Pending';
+    if (!wantsPreview && !isProcessing) return undefined;
+
+    let stopped = false;
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(viewerDoc.id)}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) return;
+        const freshDoc = (await response.json()) as DocumentRecord;
+        queueMicrotask(() => {
+          if (!stopped) setViewerDoc(freshDoc);
+        });
+      } catch {
+        // ignore transient failures
+      }
+    };
+
+    void tick();
+    const id = window.setInterval(() => void tick(), 2500);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
+  }, [API_BASE_URL, viewerDoc]);
 
   const filtered = archivedDocs.filter((d) => {
     const q = search.toLowerCase();
@@ -117,8 +164,39 @@ export default function ArchivedDocumentsPage() {
     })();
   };
 
+  const openViewer = (doc: DocumentRecord) => {
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(doc.id)}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) {
+          setViewerDoc(doc);
+          showToast(`Could not refresh document details (${response.status}). Showing list data.`, 'error');
+          return;
+        }
+        const freshDoc = (await response.json()) as DocumentRecord;
+        setViewerDoc(freshDoc);
+      } catch {
+        setViewerDoc(doc);
+        showToast(`Could not reach the server. Showing list data for "${doc.name}".`, 'error');
+      }
+    })();
+  };
+
   if (viewerDoc) {
-    return <DocumentViewerModal doc={viewerDoc} onClose={() => setViewerDoc(null)} />;
+    return (
+      <DocumentViewerModal
+        key={`${viewerDoc.id}-${viewerDoc.previewPageCount ?? 0}`}
+        doc={viewerDoc}
+        fileDownloadUrl={`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(viewerDoc.id)}/file`}
+        previewImageUrlForPage={previewImageUrlForPage}
+        onNotify={(message, type) => showToast(message, type)}
+        onClose={() => setViewerDoc(null)}
+      />
+    );
   }
 
   return (
@@ -260,7 +338,7 @@ export default function ArchivedDocumentsPage() {
                   <tr
                     key={doc.id}
                     className="border-b border-gray-50 last:border-0 hover:bg-amber-50/30 transition-all cursor-pointer group"
-                    onClick={() => setViewerDoc(doc)}
+                    onClick={() => openViewer(doc)}
                   >
                     <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
                       <input

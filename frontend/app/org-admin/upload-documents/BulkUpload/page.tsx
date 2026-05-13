@@ -14,7 +14,7 @@ interface UploadedFile {
 }
 
 export default function BulkUpload() {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const [categories, setCategories] = useState<Category[]>([]);
   const [step, setStep] = useState(0);
   const [selectedCatId, setSelectedCatId] = useState('');
@@ -149,22 +149,23 @@ export default function BulkUpload() {
         return mapped;
       };
 
-      const payload = {
-        categoryId: selectedCat.id,
-        visibility: privacy,
-        documents: files.map((item) => ({
-          fileName: item.file.name,
-          fileType: item.file.type || item.file.name.split('.').pop() || 'unknown',
-          fileSizeKb: Math.ceil(item.file.size / 1024),
-          pageCount: 0,
-          metadata: metadataByFieldNameToId(templateByFileName[item.file.name] ?? {}),
-        })),
-      };
+      const manifest = files.map((item) => ({
+        fileType: item.file.type || item.file.name.split('.').pop() || 'unknown',
+        fileSizeKb: Math.ceil(item.file.size / 1024),
+        pageCount: 0,
+        metadata: metadataByFieldNameToId(templateByFileName[item.file.name] ?? {}),
+      }));
+      const form = new FormData();
+      form.append('categoryId', selectedCat.id);
+      form.append('visibility', privacy);
+      form.append('manifest', JSON.stringify(manifest));
+      files.forEach((item) => {
+        form.append('files', item.file);
+      });
       const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents/bulk`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: form,
       });
       if (!response.ok) {
         let message = `Failed bulk upload (${response.status})`;

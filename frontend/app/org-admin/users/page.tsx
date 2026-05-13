@@ -17,7 +17,7 @@ interface Toast {
 }
 
 export default function UserManagementPage() {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const [users, setUsers] = useState<OrgUser[]>([]);
   const [search, setSearch] = useState('');
   const [filterRole, setFilterRole] = useState('');

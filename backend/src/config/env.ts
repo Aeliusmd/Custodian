@@ -1,9 +1,10 @@
 import dotenv from "dotenv";
+import path from "path";
 
 dotenv.config();
 
 export const env = {
-  port: Number(process.env.PORT ?? 3051),
+  port: Number(process.env.PORT ?? 4000),
   jwtSecret: process.env.JWT_SECRET ?? "change-this-secret",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "1d",
   nodeEnv: process.env.NODE_ENV ?? "development",
@@ -17,7 +18,22 @@ export const env = {
   smtpUser: process.env.SMTP_USER ?? "",
   smtpPass: process.env.SMTP_PASS ?? "",
   smtpFrom: process.env.SMTP_FROM ?? "no-reply@custodian.local",
-  frontendBaseUrl: process.env.FRONTEND_BASE_URL ?? "http://localhost:3052",
+  frontendBaseUrl: process.env.FRONTEND_BASE_URL ?? "http://localhost:3001",
+  /** Root directory for tenant document files (`uploads/...`). */
+  storageRoot: process.env.STORAGE_ROOT?.trim() || path.join(process.cwd(), "storage"),
+  /** Tesseract traineddata language codes, e.g. `eng` or `eng+sin` (see https://tesseract-ocr.github.io/tessdoc/Data-Files-in-different-versions.html). */
+  ocrLanguages: process.env.OCR_LANGUAGES?.trim() ?? "eng",
+  /** Max PDF pages to rasterize + OCR when the text layer is thin (cap for CPU/time). */
+  ocrPdfMaxPages: Math.max(1, Math.min(100, Number(process.env.OCR_PDF_MAX_PAGES ?? 30) || 30)),
+  /** PDF page render scale before OCR (higher = sharper, slower, more RAM). */
+  ocrViewportScale: Math.min(4, Math.max(1, Number(process.env.OCR_VIEWPORT_SCALE ?? 2) || 2)),
+  /** Directory for `app.log` (created if missing). */
+  logDir: process.env.LOG_DIR?.trim() || path.join(process.cwd(), "logs"),
+  logFileName: process.env.LOG_FILE?.trim() || "app.log",
+  /** Minimum level: debug | info | warn | error */
+  logLevel: (process.env.LOG_LEVEL?.trim().toLowerCase() as "debug" | "info" | "warn" | "error") || "info",
+  logHttp: process.env.LOG_HTTP !== "0" && process.env.LOG_HTTP !== "false",
+  logToFile: process.env.LOG_TO_FILE !== "0" && process.env.LOG_TO_FILE !== "false",
 };
 
 export const isProduction = env.nodeEnv === "production";
