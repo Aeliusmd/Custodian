@@ -270,9 +270,12 @@ const mapUiStatusToDbStatus = (status: string): "active" | "inactive" =>
 const mapDbStatusToUiStatus = (status: string): "Active" | "Inactive" =>
   status.toLowerCase() === "active" ? "Active" : "Inactive";
 
-const listDocumentsFromTenant = async (dbName: string, archived: boolean) => {
+const listDocumentsFromTenant = async (dbName: string, archived: boolean, uploadedBy?: string) => {
   await ensureTenantCategoriesSoftDeleteColumn(dbName);
   await ensureTenantDocumentsOcrSchema(dbName);
+  const params: unknown[] = [archived ? "archived" : "active"];
+  const userFilter = uploadedBy ? `AND d.uploaded_by = ?` : "";
+  if (uploadedBy) params.push(uploadedBy);
   const [rows] = await dbPool.query(
     `SELECT d.id, d.doc_code, d.name, d.visibility, d.created_at, d.updated_at, d.file_path, d.ocr_text_path, d.ocr_status, d.file_size_kb, d.file_type, d.status, d.preview_page_count,
             COALESCE(c.name, 'Uncategorized') AS category_name,
@@ -281,8 +284,9 @@ const listDocumentsFromTenant = async (dbName: string, archived: boolean) => {
        LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
        LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
       WHERE d.status = ?
+        ${userFilter}
       ORDER BY d.created_at DESC`,
-    [archived ? "archived" : "active"],
+    params,
   );
   const docs = rows as Array<{
     id: string;
@@ -1618,6 +1622,224 @@ export const protectedController = {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to delete document";
       return res.status(400).json({ message });
+    }
+  },
+
+  async listUserDocuments(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const archived = asString(req.query.archived) === "1";
+      const docs = await listDocumentsFromTenant(dbName, archived, req.user?.id);
+      return res.status(200).json(docs);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load documents";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async userDashboard(req: Request, res: Response) {
+    try {
+      if (!req.user?.organizationId) {
+        return res.status(400).json({ message: "Organization context missing in session" });
+      }
+      const userId = req.user.id;
+
+      const [orgRows] = await dbPool.query(
+        `SELECT id, name, db_name, storage_used_gb, storage_limit_gb
+           FROM \`${env.mysqlDatabase}\`.organizations
+          WHERE id = ?
+            AND is_deleted = 0
+          LIMIT 1`,
+        [req.user.organizationId],
+      );
+      const org = (orgRows as Array<{
+        id: string;
+        name: string;
+        db_name: string | null;
+        storage_used_gb: number | null;
+        storage_limit_gb: number | null;
+      }>)[0];
+      if (!org?.db_name) return res.status(404).json({ message: "Organization not found" });
+
+      const dbName = org.db_name;
+      await ensureTenantCategoriesSoftDeleteColumn(dbName);
+
+      const [myUploadRows] = await dbPool.query(
+        `SELECT COUNT(*) AS total FROM \`${dbName}\`.documents WHERE uploaded_by = ? AND status <> 'deleted'`,
+        [userId],
+      );
+      const myUploads = Number((myUploadRows as Array<{ total: number }>)[0]?.total ?? 0);
+
+      const [sharedRows] = await dbPool.query(
+        `SELECT COUNT(*) AS total FROM \`${dbName}\`.documents WHERE uploaded_by <> ? AND visibility = 'Public' AND status <> 'deleted'`,
+        [userId],
+      );
+      const sharedWithMe = Number((sharedRows as Array<{ total: number }>)[0]?.total ?? 0);
+
+      const [weeklyRows] = await dbPool.query(
+        `SELECT DATE(created_at) AS day_date, COUNT(*) AS count
+           FROM \`${dbName}\`.documents
+          WHERE uploaded_by = ?
+            AND created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+            AND status <> 'deleted'
+          GROUP BY DATE(created_at)`,
+        [userId],
+      );
+      const weeklyMap = new Map(
+        (weeklyRows as Array<{ day_date: Date; count: number }>).map((r) => [toIsoDate(new Date(r.day_date)), Number(r.count)]),
+      );
+      const uploadActivity = Array.from({ length: 7 }).map((_, i) => {
+        const dt = new Date();
+        dt.setDate(dt.getDate() - (6 - i));
+        const iso = toIsoDate(dt);
+        return { day: dt.toLocaleDateString("en-US", { weekday: "short" }), count: weeklyMap.get(iso) ?? 0 };
+      });
+
+      const [categoryDistRows] = await dbPool.query(
+        `SELECT c.name, COUNT(d.id) AS count
+           FROM \`${dbName}\`.categories c
+           LEFT JOIN \`${dbName}\`.documents d
+             ON d.category_id = c.id
+            AND d.uploaded_by = ?
+            AND d.status <> 'deleted'
+          WHERE c.is_deleted = 0
+          GROUP BY c.id, c.name
+          ORDER BY count DESC, c.name ASC
+          LIMIT 6`,
+        [userId],
+      );
+      const categoryDist = (categoryDistRows as Array<{ name: string; count: number }>).map((r) => ({
+        name: r.name,
+        count: Number(r.count ?? 0),
+      }));
+
+      const [recentRows] = await dbPool.query(
+        `SELECT d.id, d.name, d.visibility, d.created_at,
+                COALESCE(c.name, 'Uncategorized') AS category_name,
+                COALESCE(u.name, 'Unknown') AS uploaded_by
+           FROM \`${dbName}\`.documents d
+           LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
+           LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
+          WHERE d.uploaded_by = ?
+            AND d.status <> 'deleted'
+          ORDER BY d.created_at DESC
+          LIMIT 6`,
+        [userId],
+      );
+      const recentDocs = (recentRows as Array<{
+        id: string;
+        name: string;
+        visibility: "Public" | "Private";
+        created_at: Date;
+        category_name: string;
+        uploaded_by: string;
+      }>).map((r) => ({
+        id: r.id,
+        name: r.name,
+        category: r.category_name,
+        uploadedBy: r.uploaded_by,
+        date: toIsoDate(new Date(r.created_at)),
+        status: r.visibility === "Public" ? "Public" : "Private",
+      }));
+
+      const [sharedDocsRows] = await dbPool.query(
+        `SELECT d.id, d.name, d.created_at,
+                COALESCE(c.name, 'Uncategorized') AS category_name,
+                COALESCE(u.name, 'Unknown') AS shared_by
+           FROM \`${dbName}\`.documents d
+           LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
+           LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
+          WHERE d.uploaded_by <> ?
+            AND d.visibility = 'Public'
+            AND d.status <> 'deleted'
+          ORDER BY d.created_at DESC
+          LIMIT 4`,
+        [userId],
+      );
+      const sharedDocs = (sharedDocsRows as Array<{
+        id: string;
+        name: string;
+        created_at: Date;
+        category_name: string;
+        shared_by: string;
+      }>).map((r) => ({
+        id: r.id,
+        name: r.name,
+        sharedBy: r.shared_by,
+        date: toIsoDate(new Date(r.created_at)),
+        category: r.category_name,
+      }));
+
+      const storageUsed = Number(org.storage_used_gb ?? 0);
+      const storageTotal = Math.max(1, Number(org.storage_limit_gb ?? 10));
+      const storagePct = Math.min(100, Math.round((storageUsed / storageTotal) * 100));
+      const thisWeekCount = uploadActivity.reduce((s, d) => s + d.count, 0);
+
+      return res.status(200).json({
+        userName: req.user.fullName ?? "User",
+        stats: {
+          myUploads,
+          sharedWithMe,
+          storageUsedGb: storageUsed,
+          storageTotalGb: storageTotal,
+          storagePercent: storagePct,
+          thisWeekCount,
+        },
+        uploadActivity,
+        categoryDist,
+        recentDocs,
+        sharedDocs,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to fetch user dashboard";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async searchUserDocuments(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+
+      const q = asString(req.query.q).trim();
+      if (!q) return res.status(200).json([]);
+
+      const like = `%${q}%`;
+      const [rows] = await dbPool.query(
+        `SELECT d.id, d.name, d.created_at, d.uploaded_by AS uploaded_by_id,
+                COALESCE(c.name, 'Uncategorized') AS category_name,
+                COALESCE(u.name, 'Unknown') AS uploader_name
+           FROM \`${dbName}\`.documents d
+           LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
+           LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
+          WHERE d.status <> 'deleted'
+            AND (d.name LIKE ? OR c.name LIKE ?)
+          ORDER BY d.created_at DESC
+          LIMIT 30`,
+        [like, like],
+      );
+
+      const results = (rows as Array<{
+        id: string;
+        name: string;
+        created_at: Date;
+        category_name: string;
+        uploader_name: string;
+      }>).map((r) => ({
+        id: r.id,
+        documentName: r.name,
+        snippet: `Document matching "${q}" in ${r.category_name}`,
+        category: r.category_name,
+        uploadDate: toIsoDate(new Date(r.created_at)),
+        uploadedBy: r.uploader_name,
+        keywords: [q],
+      }));
+
+      return res.status(200).json(results);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to search documents";
+      return res.status(500).json({ message });
     }
   },
 
