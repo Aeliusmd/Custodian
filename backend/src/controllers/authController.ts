@@ -6,7 +6,7 @@ import type { Role } from "../types/auth";
 const roleDashboardMap: Record<Role, string> = {
   SUPER_ADMIN: "/super-admin/dashboard",
   ORG_ADMIN: "/org-admin/dashboard",
-  USER: "/user/dashboard",
+  USER: "/user",
 };
 
 const setSessionCookie = (res: Response, token: string, rememberMe?: boolean) => {
