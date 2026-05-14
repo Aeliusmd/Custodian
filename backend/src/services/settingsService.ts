@@ -8,6 +8,13 @@ import type { NotificationSetting, PasswordPayload, UserProfile } from "../types
 const nowStamp = () => new Date().toISOString().slice(0, 16).replace("T", " ");
 
 export const settingsService = {
+  /**
+   * Returns the current profile for the authenticated user.
+   * Super-admins are sourced from the super_admins table; tenant users fall
+   * back to JWT-supplied fields (name / email) until explicit updates are made.
+   *
+   * @param user - The authenticated SafeUser from the request.
+   */
   async getProfile(user: SafeUser): Promise<UserProfile> {
     if (user.role === "SUPER_ADMIN") {
       const record = await superAdminAuthModel.findById(user.id);
@@ -23,9 +30,28 @@ export const settingsService = {
         bio: "",
       };
     }
-    return settingsModel.getProfile(user.id, user.email, user.fullName, user.role);
+    const dbUser = await userModel.findById(user.id);
+    const fullName = dbUser?.fullName ?? user.fullName;
+    const [firstName = "", ...rest] = fullName.trim().split(" ");
+    return {
+      firstName,
+      lastName: rest.join(" "),
+      email: dbUser?.email ?? user.email,
+      phone: dbUser?.phone ?? "",
+      language: dbUser?.language ?? "English",
+      role: user.role,
+      bio: dbUser?.bio ?? "",
+    };
   },
 
+  /**
+   * Persists profile updates and appends an activity log entry.
+   * Super-admins write to the super_admins table; tenant users write to
+   * their org tenant DB via userModel.update.
+   *
+   * @param user - The authenticated SafeUser from the request.
+   * @param payload - The updated profile fields.
+   */
   async updateProfile(user: SafeUser, payload: UserProfile): Promise<UserProfile> {
     if (user.role === "SUPER_ADMIN") {
       const fullName = `${payload.firstName ?? ""} ${payload.lastName ?? ""}`.trim();
@@ -44,23 +70,39 @@ export const settingsService = {
       return this.getProfile(user);
     }
 
-    settingsModel.appendActivity(user.id, {
+    // Persist name / phone / language / bio to the tenant users table.
+    const fullName = `${payload.firstName ?? ""} ${payload.lastName ?? ""}`.trim();
+    const profileUpdate: Partial<{ name: string; phone: string; language: string; bio: string }> = {};
+    if (fullName) profileUpdate.name = fullName;
+    if (payload.phone !== undefined) profileUpdate.phone = payload.phone;
+    if (payload.language !== undefined) profileUpdate.language = payload.language;
+    if (payload.bio !== undefined) profileUpdate.bio = payload.bio;
+    await userModel.update(user.id, profileUpdate);
+
+    await settingsModel.appendActivity(user.id, user.organizationId, {
       id: `log-${Date.now()}`,
       dateTime: nowStamp(),
       action: "Profile Updated",
       module: "Settings",
       description: "Updated personal profile information.",
     });
+
     return settingsModel.setProfile(user.id, payload);
   },
 
+  /**
+   * Changes the authenticated user's password after verifying the current one.
+   *
+   * @param user - The authenticated SafeUser from the request.
+   * @param payload - Object containing currentPassword, newPassword, and confirmPassword.
+   */
   async changePassword(user: SafeUser, payload: PasswordPayload): Promise<{ success: boolean }> {
     if (payload.newPassword !== payload.confirmPassword) {
       throw new Error("New password and confirm password do not match");
     }
 
     const superAdminRecord = user.role === "SUPER_ADMIN" ? await superAdminAuthModel.findById(user.id) : null;
-    const regularUserRecord = user.role === "SUPER_ADMIN" ? null : userModel.findById(user.id);
+    const regularUserRecord = user.role === "SUPER_ADMIN" ? null : await userModel.findById(user.id);
     const passwordHash = superAdminRecord?.passwordHash ?? regularUserRecord?.passwordHash;
     if (!passwordHash) {
       throw new Error("User not found");
@@ -75,34 +117,57 @@ export const settingsService = {
     if (user.role === "SUPER_ADMIN") {
       await superAdminAuthModel.updatePasswordById(user.id, nextHash);
     } else {
-      userModel.updatePassword(user.id, nextHash);
+      await userModel.updatePassword(user.id, nextHash);
     }
-    settingsModel.appendActivity(user.id, {
-      id: `log-${Date.now()}`,
-      dateTime: nowStamp(),
-      action: "Password Changed",
-      module: "Security",
-      description: "Updated account password.",
-    });
+
+    // Super-admins have no tenant DB, so activity logging is skipped for them.
+    if (user.role !== "SUPER_ADMIN") {
+      await settingsModel.appendActivity(user.id, user.organizationId, {
+        id: `log-${Date.now()}`,
+        dateTime: nowStamp(),
+        action: "Password Changed",
+        module: "Security",
+        description: "Updated account password.",
+      });
+    }
+
     return { success: true };
   },
 
-  getNotificationSettings(user: SafeUser): NotificationSetting[] {
-    return settingsModel.getNotifications(user.id);
+  /**
+   * Returns all notification settings for the authenticated user.
+   * Seeds defaults on first access.
+   *
+   * @param user - The authenticated SafeUser from the request.
+   */
+  async getNotificationSettings(user: SafeUser): Promise<NotificationSetting[]> {
+    return settingsModel.getNotifications(user.id, user.organizationId);
   },
 
-  updateNotificationSettings(user: SafeUser, payload: NotificationSetting[]): NotificationSetting[] {
-    settingsModel.appendActivity(user.id, {
+  /**
+   * Replaces all notification settings for the authenticated user and logs
+   * the change.
+   *
+   * @param user - The authenticated SafeUser from the request.
+   * @param payload - The full updated list of notification settings.
+   */
+  async updateNotificationSettings(user: SafeUser, payload: NotificationSetting[]): Promise<NotificationSetting[]> {
+    await settingsModel.appendActivity(user.id, user.organizationId, {
       id: `log-${Date.now()}`,
       dateTime: nowStamp(),
       action: "Notification Settings Updated",
       module: "Settings",
       description: "Updated notification preferences.",
     });
-    return settingsModel.setNotifications(user.id, payload);
+    return settingsModel.setNotifications(user.id, user.organizationId, payload);
   },
 
-  getActivityLogs(user: SafeUser) {
-    return settingsModel.getActivity(user.id);
+  /**
+   * Returns the activity log for the authenticated user (most recent 50 entries).
+   *
+   * @param user - The authenticated SafeUser from the request.
+   */
+  async getActivityLogs(user: SafeUser): Promise<ReturnType<typeof settingsModel.getActivity>> {
+    return settingsModel.getActivity(user.id, user.organizationId);
   },
 };

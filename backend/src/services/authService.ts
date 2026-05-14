@@ -25,8 +25,8 @@ interface JwtPayload {
   organizationDbName?: string;
 }
 
-const toSafeUserFromMemory = (userId: string): SafeUser => {
-  const user = userModel.findById(userId);
+const toSafeUserFromMemory = async (userId: string): Promise<SafeUser> => {
+  const user = await userModel.findById(userId);
   if (!user) {
     throw new Error("User not found");
   }
@@ -312,7 +312,7 @@ export const authService = {
   },
 
   async signup(payload: SignupPayload): Promise<AuthResult> {
-    const existing = userModel.findByEmail(payload.email);
+    const existing = await userModel.findByEmail(payload.email);
     if (existing) {
       throw new Error("Email already in use");
     }
@@ -327,13 +327,16 @@ export const authService = {
       role: "ORG_ADMIN",
       organizationId: `org_${payload.organizationName.toLowerCase().replace(/\s+/g, "_")}`,
       isActive: true,
+      phone: "",
+      language: "English",
+      bio: "",
     });
 
     const token = jwt.sign({ sub: newId, role: "ORG_ADMIN" }, jwtSecret, jwtSignOptions);
 
     return {
       token,
-      user: toSafeUserFromMemory(newId),
+      user: await toSafeUserFromMemory(newId),
     };
   },
 

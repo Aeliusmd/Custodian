@@ -37,6 +37,7 @@ export default function AllDocumentsPage() {
   const [filterDateTo, setFilterDateTo] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
   const [modal, setModal] = useState<ModalType>(null);
   const [activeDoc, setActiveDoc] = useState<DocumentRecord | null>(null);
   const [viewerDoc, setViewerDoc] = useState<DocumentRecord | null>(null);
@@ -395,45 +396,16 @@ export default function AllDocumentsPage() {
                       <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
                         <div className="relative">
                           <button
-                            onClick={() => setActiveMenu(activeMenu === doc.id ? null : doc.id)}
+                            onClick={(e) => {
+                              const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                              setMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                              setActiveMenu(activeMenu === doc.id ? null : doc.id);
+                            }}
                             title="More actions" aria-label="More actions"
                             className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all cursor-pointer ${activeMenu === doc.id ? 'bg-[#0097B2]/10 text-[#0097B2]' : 'text-gray-400 hover:bg-gray-100 hover:text-[#1a2340]'}`}
                           >
                             <i className="ri-more-2-fill text-base" />
                           </button>
-                          {activeMenu === doc.id && (
-                            <div className="absolute right-0 top-10 w-52 bg-white border border-gray-200 rounded-2xl overflow-hidden z-40 py-1.5">
-                              <button onClick={() => openViewer(doc)} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
-                                <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-eye-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
-                                <span className="font-medium">View Document</span>
-                              </button>
-                              <button onClick={() => openModal('edit', doc)} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
-                                <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-edit-2-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
-                                <span className="font-medium">Edit Metadata</span>
-                              </button>
-                              <button onClick={() => openModal('share', doc)} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
-                                <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-share-forward-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
-                                <span className="font-medium">Share</span>
-                              </button>
-                              <button onClick={() => handleDownload(doc)} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
-                                <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-download-2-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
-                                <span className="font-medium">Download</span>
-                              </button>
-                              <button onClick={() => openModal('version', doc)} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
-                                <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-history-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
-                                <span className="font-medium">Version History</span>
-                              </button>
-                              <button onClick={() => void handleArchiveSingle(doc)} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer group/item">
-                                <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-amber-50 group-hover/item:bg-amber-100 transition-colors flex-shrink-0"><i className="ri-archive-line text-xs text-amber-500" /></span>
-                                <span className="font-medium">Archive</span>
-                              </button>
-                              <div className="mx-4 my-1 border-t border-gray-100" />
-                              <button onClick={() => openModal('delete', doc)} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-500 hover:bg-red-50 transition-colors cursor-pointer group/item">
-                                <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-red-50 group-hover/item:bg-red-100 transition-colors flex-shrink-0"><i className="ri-delete-bin-line text-xs text-red-400" /></span>
-                                <span className="font-medium">Delete</span>
-                              </button>
-                            </div>
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -463,6 +435,49 @@ export default function AllDocumentsPage() {
       {modal === 'share' && <ShareDocumentModal docs={activeDoc ? [activeDoc] : selectedDocs} onClose={() => setModal(null)} />}
       {modal === 'version' && activeDoc && <VersionHistoryModal doc={activeDoc} onClose={() => setModal(null)} />}
       {modal === 'delete' && <DeleteDocumentModal docs={activeDoc ? [activeDoc] : selectedDocs} onClose={() => setModal(null)} onConfirm={(ids) => void handleDelete(ids)} />}
+
+      {/* Fixed dropdown — renders outside table so overflow:hidden never clips it */}
+      {activeMenu && (() => {
+        const doc = documents.find((d) => d.id === activeMenu);
+        if (!doc) return null;
+        return (
+          <div
+            style={{ position: 'fixed', top: menuPos.top, right: menuPos.right, zIndex: 9999 }}
+            className="w-52 bg-white border border-gray-200 rounded-2xl shadow-xl overflow-hidden py-1.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button onClick={() => { openViewer(doc); setActiveMenu(null); }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
+              <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-eye-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
+              <span className="font-medium">View Document</span>
+            </button>
+            <button onClick={() => { openModal('edit', doc); setActiveMenu(null); }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
+              <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-edit-2-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
+              <span className="font-medium">Edit Metadata</span>
+            </button>
+            <button onClick={() => { openModal('share', doc); setActiveMenu(null); }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
+              <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-share-forward-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
+              <span className="font-medium">Share</span>
+            </button>
+            <button onClick={() => { handleDownload(doc); setActiveMenu(null); }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
+              <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-download-2-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
+              <span className="font-medium">Download</span>
+            </button>
+            <button onClick={() => { openModal('version', doc); setActiveMenu(null); }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
+              <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-history-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
+              <span className="font-medium">Version History</span>
+            </button>
+            <button onClick={() => { void handleArchiveSingle(doc); setActiveMenu(null); }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer group/item">
+              <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-amber-50 group-hover/item:bg-amber-100 transition-colors flex-shrink-0"><i className="ri-archive-line text-xs text-amber-500" /></span>
+              <span className="font-medium">Archive</span>
+            </button>
+            <div className="mx-4 my-1 border-t border-gray-100" />
+            <button onClick={() => { openModal('delete', doc); setActiveMenu(null); }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-500 hover:bg-red-50 transition-colors cursor-pointer group/item">
+              <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-red-50 group-hover/item:bg-red-100 transition-colors flex-shrink-0"><i className="ri-delete-bin-line text-xs text-red-400" /></span>
+              <span className="font-medium">Delete</span>
+            </button>
+          </div>
+        );
+      })()}
     </div>
   );
 }

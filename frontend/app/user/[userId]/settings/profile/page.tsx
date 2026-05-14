@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useParams } from 'next/navigation';
 
 const TEAL = '#0097B2';
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
 
+/** Shape returned by GET /user/settings/profile and PUT /user/settings/profile */
 interface UserProfile {
   firstName: string;
   lastName: string;
@@ -22,6 +24,7 @@ interface Toast {
 }
 
 export default function UserProfilePage() {
+  const { userId } = useParams<{ userId: string }>();
   const [profile, setProfile] = useState<UserProfile>({
     firstName: '', lastName: '', email: '', phone: '', language: 'English', role: 'USER', bio: '',
   });
@@ -29,6 +32,10 @@ export default function UserProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem(`user-avatar-${userId}`) ?? null;
+  });
 
   const [currentPass, setCurrentPass] = useState('');
   const [newPass, setNewPass] = useState('');
@@ -38,8 +45,23 @@ export default function UserProfilePage() {
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  // Prevents browser autofill from pre-populating password fields with stale saved credentials.
+  // Chrome skips autofill on readOnly inputs; the restriction lifts on first focus.
+  const [passReady, setPassReady] = useState(false);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setAvatarUrl(dataUrl);
+      localStorage.setItem(`user-avatar-${userId}`, dataUrl);
+    };
+    reader.readAsDataURL(file);
+  };
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     const id = Date.now();
@@ -50,7 +72,10 @@ export default function UserProfilePage() {
   const loadProfile = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE_URL}/user/settings/profile`, { credentials: 'include' });
+      const res = await fetch(
+        `${API_BASE_URL}/user/settings/profile`,
+        { credentials: 'include' },
+      );
       if (!res.ok) throw new Error('Failed to load profile');
       const data = await res.json() as UserProfile;
       setProfile(data);
@@ -75,12 +100,15 @@ export default function UserProfilePage() {
 
     try {
       setSaving(true);
-      const res = await fetch(`${API_BASE_URL}/user/settings/profile`, {
-        method: 'PUT',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profile),
-      });
+      const res = await fetch(
+        `${API_BASE_URL}/user/settings/profile`,
+        {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(profile),
+        },
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { message?: string };
         throw new Error(body.message ?? 'Failed to save profile');
@@ -123,6 +151,7 @@ export default function UserProfilePage() {
         throw new Error(body.message ?? 'Failed to change password');
       }
       setCurrentPass(''); setNewPass(''); setConfirmPass('');
+      setPassReady(false);
       showToast('Password changed successfully');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to change password', 'error');
@@ -176,13 +205,22 @@ export default function UserProfilePage() {
       <div className="max-w-3xl space-y-6">
         {/* Avatar card */}
         <div className="bg-white rounded-2xl border border-gray-200 p-6 flex items-center gap-5">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0" style={{ background: '#d97706' }}>
-            {initials}
+          <div className="relative flex-shrink-0">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="avatar" className="w-16 h-16 rounded-full object-cover" />
+            ) : (
+              <div className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl" style={{ background: '#d97706' }}>
+                {initials}
+              </div>
+            )}
           </div>
           <div>
             <p className="text-base font-bold text-[#1a2340]">{profile.firstName} {profile.lastName}</p>
             <p className="text-sm mt-0.5 text-amber-600">User</p>
-            <button className="text-sm font-semibold mt-1 cursor-pointer hover:underline" style={{ color: TEAL }}>Change Avatar</button>
+            <label className="text-sm font-semibold mt-1 cursor-pointer hover:underline" style={{ color: TEAL }}>
+              Change Avatar
+              <input type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
+            </label>
           </div>
         </div>
 
@@ -286,10 +324,12 @@ export default function UserProfilePage() {
             <h3 className="text-sm font-bold text-[#1a2340]">Change Password</h3>
           </div>
           <div className="p-6 space-y-5">
+            {/* Hidden username field — required for browser password manager to update saved credentials */}
+            <input type="hidden" autoComplete="username" value={profile.email} readOnly />
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1.5">Current Password</label>
               <div className={`flex items-center border rounded-lg px-3.5 py-2.5 gap-2 transition-all ${passErrors.currentPass ? 'border-red-300 bg-red-50' : 'border-gray-200 focus-within:border-[#0097B2]'}`}>
-                <input type={showCurrent ? 'text' : 'password'} value={currentPass} onChange={(e) => setCurrentPass(e.target.value)} placeholder="Enter current password" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
+                <input type={showCurrent ? 'text' : 'password'} autoComplete="current-password" readOnly={!passReady} onFocus={() => setPassReady(true)} value={currentPass} onChange={(e) => setCurrentPass(e.target.value)} placeholder="Enter current password" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
                 <button type="button" onClick={() => setShowCurrent(!showCurrent)} className="text-gray-400 hover:text-gray-600 cursor-pointer w-4 h-4 flex items-center justify-center">
                   <i className={showCurrent ? 'ri-eye-off-line' : 'ri-eye-line'} />
                 </button>
@@ -300,7 +340,7 @@ export default function UserProfilePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">New Password</label>
                 <div className={`flex items-center border rounded-lg px-3.5 py-2.5 gap-2 transition-all ${passErrors.newPass ? 'border-red-300 bg-red-50' : 'border-gray-200 focus-within:border-[#0097B2]'}`}>
-                  <input type={showNew ? 'text' : 'password'} value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="Min. 8 characters" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
+                  <input type={showNew ? 'text' : 'password'} autoComplete="new-password" readOnly={!passReady} onFocus={() => setPassReady(true)} value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="Min. 8 characters" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
                   <button type="button" onClick={() => setShowNew(!showNew)} className="text-gray-400 hover:text-gray-600 cursor-pointer w-4 h-4 flex items-center justify-center">
                     <i className={showNew ? 'ri-eye-off-line' : 'ri-eye-line'} />
                   </button>
@@ -318,7 +358,7 @@ export default function UserProfilePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">Confirm New Password</label>
                 <div className={`flex items-center border rounded-lg px-3.5 py-2.5 gap-2 transition-all ${passErrors.confirmPass ? 'border-red-300 bg-red-50' : 'border-gray-200 focus-within:border-[#0097B2]'}`}>
-                  <input type={showConfirm ? 'text' : 'password'} value={confirmPass} onChange={(e) => setConfirmPass(e.target.value)} placeholder="Re-enter new password" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
+                  <input type={showConfirm ? 'text' : 'password'} autoComplete="new-password" readOnly={!passReady} onFocus={() => setPassReady(true)} value={confirmPass} onChange={(e) => setConfirmPass(e.target.value)} placeholder="Re-enter new password" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
                   <button type="button" onClick={() => setShowConfirm(!showConfirm)} className="text-gray-400 hover:text-gray-600 cursor-pointer w-4 h-4 flex items-center justify-center">
                     <i className={showConfirm ? 'ri-eye-off-line' : 'ri-eye-line'} />
                   </button>

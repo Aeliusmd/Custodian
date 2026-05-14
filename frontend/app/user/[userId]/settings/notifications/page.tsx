@@ -12,6 +12,7 @@ interface NotificationSetting {
   icon: string;
   enabled: boolean;
   category: string;
+  sort_order: number;
 }
 
 interface Toast {
@@ -36,7 +37,10 @@ export default function UserNotificationsPage() {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE_URL}/user/settings/notifications`, { credentials: 'include' });
+      const res = await fetch(
+        `${API_BASE_URL}/user/settings/notifications`,
+        { credentials: 'include' },
+      );
       if (!res.ok) throw new Error('Failed to load notifications');
       const data = await res.json() as NotificationSetting[];
       setSettings(data);
@@ -67,10 +71,8 @@ export default function UserNotificationsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings),
       });
-      if (!res.ok) throw new Error('Failed to save');
-      const updated = await res.json() as NotificationSetting[];
-      setSettings(updated);
-      setOriginal(updated);
+      if (!res.ok) throw new Error('Failed to save preferences');
+      setOriginal(settings);
       setHasChanges(false);
       showToast('Notification preferences saved');
     } catch {
@@ -79,8 +81,6 @@ export default function UserNotificationsPage() {
       setSaving(false);
     }
   };
-
-  void original;
 
   const categories = Array.from(new Set(settings.map((s) => s.category)));
   const enabledCount = settings.filter((s) => s.enabled).length;

@@ -32,24 +32,24 @@ export const settingsController = {
     }
   },
 
-  getNotificationSettings(req: Request, res: Response) {
+  async getNotificationSettings(req: Request, res: Response) {
     if (!req.user) {
       return unauthorized(res);
     }
-    return res.status(200).json(settingsService.getNotificationSettings(req.user));
+    return res.status(200).json(await settingsService.getNotificationSettings(req.user));
   },
 
-  updateNotificationSettings(req: Request, res: Response) {
+  async updateNotificationSettings(req: Request, res: Response) {
     if (!req.user) {
       return unauthorized(res);
     }
-    return res.status(200).json(settingsService.updateNotificationSettings(req.user, req.body));
+    return res.status(200).json(await settingsService.updateNotificationSettings(req.user, req.body));
   },
 
-  getActivityLogs(req: Request, res: Response) {
+  async getActivityLogs(req: Request, res: Response) {
     if (!req.user) {
       return unauthorized(res);
     }
-    return res.status(200).json(settingsService.getActivityLogs(req.user));
+    return res.status(200).json(await settingsService.getActivityLogs(req.user));
   },
 };
