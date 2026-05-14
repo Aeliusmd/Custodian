@@ -4,14 +4,25 @@ import type { ActivityLog, NotificationSetting, UserProfile } from "../types/set
 
 /** Default notification rows seeded for every new user on first access. */
 const DEFAULT_NOTIFICATIONS: Array<Omit<NotificationSetting, ""> & { sort_order: number }> = [
-  { id: "document_uploads",      label: "Document Uploads",  description: "Notify when a document is uploaded",          icon: "upload",   enabled: true,  category: "Documents", sort_order: 0 },
-  { id: "document_shared",       label: "Document Shared",   description: "Notify when a document is shared with you",   icon: "share",    enabled: true,  category: "Documents", sort_order: 1 },
-  { id: "team_updates",          label: "Team Updates",      description: "Notify on team member changes",                icon: "users",    enabled: false, category: "Team",      sort_order: 2 },
-  { id: "system_alerts",         label: "System Alerts",     description: "Notify on system events",                     icon: "bell",     enabled: true,  category: "System",    sort_order: 3 },
-  { id: "weekly_reports",        label: "Weekly Reports",    description: "Receive a weekly activity summary",            icon: "calendar", enabled: false, category: "Reports",   sort_order: 4 },
-  { id: "version_notifications", label: "Version Updates",   description: "Notify when a new version is released",       icon: "refresh",  enabled: true,  category: "System",    sort_order: 5 },
-  { id: "login_notifications",   label: "Login Alerts",      description: "Notify on new login to your account",         icon: "shield",   enabled: true,  category: "Security",  sort_order: 6 },
+  { id: "document_uploads",      label: "Document Uploads",  description: "Notify when a document is uploaded",          icon: "ri-upload-cloud-2-line", enabled: true,  category: "Documents", sort_order: 0 },
+  { id: "document_shared",       label: "Document Shared",   description: "Notify when a document is shared with you",   icon: "ri-share-line",          enabled: true,  category: "Documents", sort_order: 1 },
+  { id: "team_updates",          label: "Team Updates",      description: "Notify on team member changes",                icon: "ri-team-line",           enabled: false, category: "Team",      sort_order: 2 },
+  { id: "system_alerts",         label: "System Alerts",     description: "Notify on system events",                     icon: "ri-bell-line",           enabled: true,  category: "System",    sort_order: 3 },
+  { id: "weekly_reports",        label: "Weekly Reports",    description: "Receive a weekly activity summary",            icon: "ri-bar-chart-2-line",    enabled: false, category: "Reports",   sort_order: 4 },
+  { id: "version_notifications", label: "Version Updates",   description: "Notify when a new version is released",       icon: "ri-history-line",        enabled: true,  category: "System",    sort_order: 5 },
+  { id: "login_notifications",   label: "Login Alerts",      description: "Notify on new login to your account",         icon: "ri-shield-check-line",   enabled: true,  category: "Security",  sort_order: 6 },
 ];
+
+/** Maps legacy plain-text icon names (stored before Remix Icon migration) to their ri- equivalents. */
+const LEGACY_ICON_MAP: Record<string, string> = {
+  upload:   "ri-upload-cloud-2-line",
+  share:    "ri-share-line",
+  users:    "ri-team-line",
+  bell:     "ri-bell-line",
+  calendar: "ri-bar-chart-2-line",
+  refresh:  "ri-history-line",
+  shield:   "ri-shield-check-line",
+};
 
 /**
  * Resolves the tenant DB name for a given organization ID.
@@ -120,7 +131,7 @@ export const settingsModel = {
       id: r.id,
       label: r.label,
       description: r.description,
-      icon: r.icon,
+      icon: LEGACY_ICON_MAP[r.icon] ?? r.icon,
       enabled: Boolean(r.enabled),
       category: r.category,
     }));

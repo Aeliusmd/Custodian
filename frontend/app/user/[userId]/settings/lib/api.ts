@@ -1,6 +1,5 @@
 import type {
   ActivityLog,
-  NotificationSetting,
   PasswordPayload,
   UserProfile,
 } from './types';
@@ -8,7 +7,6 @@ import type {
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '/api';
 
 const PROFILE_STORAGE_KEY = 'user-settings-profile';
-const NOTIFICATIONS_STORAGE_KEY = 'user-settings-notifications';
 
 const defaultProfile: UserProfile = {
   firstName: '',
@@ -19,49 +17,6 @@ const defaultProfile: UserProfile = {
   role: 'User',
   bio: '',
 };
-
-const defaultNotifications: NotificationSetting[] = [
-  {
-    id: 'email_notifications',
-    label: 'Email Notifications',
-    description: 'Receive email alerts for important system events and updates',
-    icon: 'ri-mail-send-line',
-    enabled: true,
-    category: 'General',
-  },
-  {
-    id: 'upload_notifications',
-    label: 'Upload Notifications',
-    description: 'Get notified when a new document is uploaded to any category',
-    icon: 'ri-upload-cloud-2-line',
-    enabled: true,
-    category: 'Documents',
-  },
-  {
-    id: 'sharing_notifications',
-    label: 'Sharing Notifications',
-    description: 'Receive alerts when documents are shared with you or on your behalf',
-    icon: 'ri-share-line',
-    enabled: true,
-    category: 'Documents',
-  },
-  {
-    id: 'version_notifications',
-    label: 'Version Updates',
-    description: 'Be notified when a new version of a document is uploaded',
-    icon: 'ri-history-line',
-    enabled: false,
-    category: 'Documents',
-  },
-  {
-    id: 'login_notifications',
-    label: 'Login Activity',
-    description: 'Receive email alerts for sign-ins from new devices or unusual locations',
-    icon: 'ri-shield-check-line',
-    enabled: true,
-    category: 'Security',
-  },
-];
 
 const defaultActivityLogs: ActivityLog[] = [];
 
@@ -140,28 +95,6 @@ export const settingsApi = {
         body: JSON.stringify(payload),
       },
       () => ({ success: true }),
-    );
-  },
-
-  async getNotificationSettings(): Promise<NotificationSetting[]> {
-    return requestWithFallback<NotificationSetting[]>(
-      '/user/settings/notifications',
-      { method: 'GET' },
-      () => parseStored<NotificationSetting[]>(NOTIFICATIONS_STORAGE_KEY, defaultNotifications),
-    );
-  },
-
-  async updateNotificationSettings(payload: NotificationSetting[]): Promise<NotificationSetting[]> {
-    return requestWithFallback<NotificationSetting[]>(
-      '/user/settings/notifications',
-      {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      },
-      () => {
-        writeStored(NOTIFICATIONS_STORAGE_KEY, payload);
-        return payload;
-      },
     );
   },
 

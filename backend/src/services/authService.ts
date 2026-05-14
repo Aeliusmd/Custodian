@@ -5,6 +5,7 @@ import { dbPool } from "../config/db";
 import { env } from "../config/env";
 import { superAdminAuthModel } from "../models/superAdminAuthModel";
 import { emailService } from "./emailService";
+import { notifyOrgAdmin } from "./notificationService";
 import { userModel } from "../models/userModel";
 import type { LoginIdentity, LoginPayload, SafeUser, SignupPayload } from "../types/auth";
 
@@ -291,11 +292,23 @@ export const authService = {
       jwtSecret,
       jwtSignOptions,
     );
-    return {
+
+    const authResult = {
       token,
       user: toSafeUser(challenge.user),
       rememberMe: challenge.rememberMe,
     };
+
+    if (authResult.user.role !== "ORG_ADMIN" && authResult.user.organizationId) {
+      void notifyOrgAdmin(authResult.user.organizationId, "login_notifications", {
+        actorEmail: authResult.user.email,
+        userName: authResult.user.fullName,
+        userEmail: authResult.user.email,
+        loginTime: new Date().toLocaleString(),
+      });
+    }
+
+    return authResult;
   },
 
   async resendLoginOtp(challengeId: string): Promise<void> {

@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { dbPool } from "../config/db";
 import { env } from "../config/env";
 import crypto from "crypto";
+import { notifyOrgAdmin } from "../services/notificationService";
 
 const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
@@ -701,6 +702,14 @@ export const protectedController = {
       }
 
       await conn.commit();
+
+      void notifyOrgAdmin(req.user?.organizationId ?? "", "document_uploads", {
+        actorName: req.user?.fullName,
+        actorEmail: req.user?.email,
+        fileName: fileName,
+        categoryName: categoryId,
+      });
+
       return res.status(201).json({
         id: documentId,
         docCode,
@@ -782,6 +791,15 @@ export const protectedController = {
          VALUES (?, ?, ?, ?, ?, ?)`,
         [userId, name, email, passwordHash, role, status],
       );
+
+      void notifyOrgAdmin(req.user?.organizationId ?? "", "team_updates", {
+        actorName: req.user?.fullName,
+        actorEmail: req.user?.email,
+        actionType: "added",
+        userName: name,
+        userEmail: email,
+      });
+
       return res.status(201).json({ id: userId });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create user";
@@ -821,6 +839,15 @@ export const protectedController = {
       if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) {
         return res.status(404).json({ message: "User not found" });
       }
+
+      void notifyOrgAdmin(req.user?.organizationId ?? "", "team_updates", {
+        actorName: req.user?.fullName,
+        actorEmail: req.user?.email,
+        actionType: "updated",
+        userName: name,
+        userEmail: email,
+      });
+
       return res.status(200).json({ success: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update user";
@@ -847,6 +874,14 @@ export const protectedController = {
       if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) {
         return res.status(404).json({ message: "User not found" });
       }
+
+      void notifyOrgAdmin(req.user?.organizationId ?? "", "team_updates", {
+        actorName: req.user?.fullName,
+        actorEmail: req.user?.email,
+        actionType: "removed",
+        userName: id,
+      });
+
       return res.status(204).send();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to delete user";
@@ -976,6 +1011,16 @@ export const protectedController = {
       }
 
       await conn.commit();
+
+      const successCount = created.length;
+      if (successCount > 0) {
+        void notifyOrgAdmin(req.user?.organizationId ?? "", "document_uploads", {
+          actorName: req.user?.fullName,
+          actorEmail: req.user?.email,
+          fileName: `${successCount} document(s)`,
+        });
+      }
+
       return res.status(201).json({ uploaded: created.length, documents: created });
     } catch (error) {
       await conn.rollback();

@@ -22,15 +22,7 @@ const defaultProfile: UserProfile = {
 
 const defaultNotifications: NotificationSetting[] = [
   {
-    id: 'email_notifications',
-    label: 'Email Notifications',
-    description: 'Receive email alerts for important system events and updates',
-    icon: 'ri-mail-send-line',
-    enabled: true,
-    category: 'General',
-  },
-  {
-    id: 'upload_notifications',
+    id: 'document_uploads',
     label: 'Upload Notifications',
     description: 'Get notified when a new document is uploaded to any category',
     icon: 'ri-upload-cloud-2-line',
@@ -38,7 +30,7 @@ const defaultNotifications: NotificationSetting[] = [
     category: 'Documents',
   },
   {
-    id: 'sharing_notifications',
+    id: 'document_shared',
     label: 'Sharing Notifications',
     description: 'Receive alerts when documents are shared with you or on your behalf',
     icon: 'ri-share-line',
@@ -54,10 +46,10 @@ const defaultNotifications: NotificationSetting[] = [
     category: 'Documents',
   },
   {
-    id: 'user_notifications',
+    id: 'team_updates',
     label: 'User Management Alerts',
     description: 'Get alerts when new users are added, removed, or their status changes',
-    icon: 'ri-user-received-line',
+    icon: 'ri-team-line',
     enabled: true,
     category: 'Users',
   },
@@ -70,15 +62,15 @@ const defaultNotifications: NotificationSetting[] = [
     category: 'Security',
   },
   {
-    id: 'storage_notifications',
+    id: 'system_alerts',
     label: 'Storage Limit Warnings',
     description: 'Get notified when storage usage reaches 80% or 95% of your limit',
-    icon: 'ri-database-2-line',
+    icon: 'ri-bell-line',
     enabled: true,
     category: 'System',
   },
   {
-    id: 'report_notifications',
+    id: 'weekly_reports',
     label: 'Weekly Summary Report',
     description: 'Receive a weekly digest of activity, uploads, and user actions',
     icon: 'ri-bar-chart-2-line',
