@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 
-export default function SetPasswordPage() {
+function SetPasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token") ?? "";
@@ -165,5 +165,21 @@ export default function SetPasswordPage() {
         </Link>
       </div>
     </div>
+  );
+}
+
+export default function SetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-brand-bg p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl border border-brand-border shadow-sm p-8">
+            <p className="text-sm text-brand-muted text-center">Loading invite...</p>
+          </div>
+        </div>
+      }
+    >
+      <SetPasswordContent />
+    </Suspense>
   );
 }

@@ -5,7 +5,7 @@ const TEAL = '#0097B2';
 
 const uploadModes = [
   {
-    href: '/org-admin/upload-documents/SingleUpload',
+    href: '/user/upload-documents/SingleUpload',
     title: 'Single Upload',
     icon: 'ri-file-upload-line',
     accent: TEAL,
@@ -13,7 +13,7 @@ const uploadModes = [
     steps: ['Select category', 'Upload file with drag & drop', 'Fill dynamic metadata form', 'Set privacy & publish'],
   },
   {
-    href: '/org-admin/upload-documents/BulkUpload',
+    href: '/user/upload-documents/BulkUpload',
     title: 'Bulk Upload',
     icon: 'ri-folder-upload-line',
     accent: '#16A34A',

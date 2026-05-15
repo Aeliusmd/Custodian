@@ -28,6 +28,7 @@ export const settingsService = {
         language: "English",
         role: user.role,
         bio: "",
+        avatarDataUrl: "",
       };
     }
     const dbUser = await userModel.findById(user.id);
@@ -41,6 +42,7 @@ export const settingsService = {
       language: dbUser?.language ?? "English",
       role: user.role,
       bio: dbUser?.bio ?? "",
+      avatarDataUrl: dbUser?.avatarDataUrl ?? "",
     };
   },
 
@@ -70,13 +72,14 @@ export const settingsService = {
       return this.getProfile(user);
     }
 
-    // Persist name / phone / language / bio to the tenant users table.
+    // Persist name / phone / language / bio / avatar to the tenant users table.
     const fullName = `${payload.firstName ?? ""} ${payload.lastName ?? ""}`.trim();
-    const profileUpdate: Partial<{ name: string; phone: string; language: string; bio: string }> = {};
+    const profileUpdate: Partial<{ name: string; phone: string; language: string; bio: string; avatarDataUrl: string }> = {};
     if (fullName) profileUpdate.name = fullName;
     if (payload.phone !== undefined) profileUpdate.phone = payload.phone;
     if (payload.language !== undefined) profileUpdate.language = payload.language;
     if (payload.bio !== undefined) profileUpdate.bio = payload.bio;
+    if (payload.avatarDataUrl !== undefined) profileUpdate.avatarDataUrl = payload.avatarDataUrl;
     await userModel.update(user.id, profileUpdate);
 
     await settingsModel.appendActivity(user.id, user.organizationId, {

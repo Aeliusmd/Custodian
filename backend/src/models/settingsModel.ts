@@ -72,6 +72,7 @@ export const settingsModel = {
       language: "English",
       role,
       bio: "",
+      avatarDataUrl: "",
     };
   },
 

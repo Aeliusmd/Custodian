@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, type MouseEvent } from 'react';
 import Link from 'next/link';
 import type { DocumentRecord } from '../../../mocks/documents';
 import EditMetadataModal from './modals/EditMetadataModal';
@@ -35,6 +35,7 @@ export default function AllDocumentsPage() {
   const [filterDateTo, setFilterDateTo] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [activeMenuPosition, setActiveMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const [modal, setModal] = useState<ModalType>(null);
   const [activeDoc, setActiveDoc] = useState<DocumentRecord | null>(null);
   const [viewerDoc, setViewerDoc] = useState<DocumentRecord | null>(null);
@@ -104,11 +105,36 @@ export default function AllDocumentsPage() {
     setActiveDoc(doc);
     setModal(type);
     setActiveMenu(null);
+    setActiveMenuPosition(null);
   };
 
   const openViewer = (doc: DocumentRecord) => {
     setViewerDoc(doc);
     setActiveMenu(null);
+    setActiveMenuPosition(null);
+  };
+
+  const toggleActionMenu = (event: MouseEvent<HTMLButtonElement>, docId: string) => {
+    event.stopPropagation();
+    if (activeMenu === docId) {
+      setActiveMenu(null);
+      setActiveMenuPosition(null);
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 208;
+    const menuHeight = 340;
+    const margin = 8;
+    const left = Math.min(window.innerWidth - menuWidth - margin, Math.max(margin, rect.right - menuWidth));
+    const belowTop = rect.bottom + margin;
+    const top =
+      window.innerHeight - belowTop < menuHeight && rect.top > menuHeight
+        ? rect.top - menuHeight - margin
+        : Math.min(belowTop, window.innerHeight - menuHeight - margin);
+
+    setActiveMenu(docId);
+    setActiveMenuPosition({ top: Math.max(margin, top), left });
   };
 
   const handleArchiveSingle = async (doc: DocumentRecord) => {
@@ -124,6 +150,7 @@ export default function AllDocumentsPage() {
       setSelected((prev) => { const next = new Set(prev); next.delete(doc.id); return next; });
       setArchivedCount((n) => n + 1);
       setActiveMenu(null);
+      setActiveMenuPosition(null);
       showToast(`"${doc.name}" moved to archive`);
     } catch {
       showToast('Failed to archive document', 'error');
@@ -188,7 +215,11 @@ export default function AllDocumentsPage() {
   };
 
   const handleBulkDownload = () => showToast(`Downloading ${selected.size} files as ZIP...`);
-  const handleDownload = (doc: DocumentRecord) => { showToast(`Downloading "${doc.name}"...`); setActiveMenu(null); };
+  const handleDownload = (doc: DocumentRecord) => {
+    showToast(`Downloading "${doc.name}"...`);
+    setActiveMenu(null);
+    setActiveMenuPosition(null);
+  };
 
   const selectedDocs = documents.filter((d) => selected.has(d.id));
   const clearFilters = () => { setFilterCategory(''); setFilterVisibility(''); setFilterUploader(''); setFilterDateFrom(''); setFilterDateTo(''); setSearch(''); };
@@ -201,7 +232,7 @@ export default function AllDocumentsPage() {
   };
 
   return (
-    <div className="px-4 py-5 sm:p-6 min-h-full font-inter" onClick={() => setActiveMenu(null)}>
+    <div className="px-4 py-5 sm:p-6 min-h-full font-inter" onClick={() => { setActiveMenu(null); setActiveMenuPosition(null); }}>
       {/* Toast */}
       <div className="fixed top-4 right-4 left-4 sm:left-auto sm:top-5 sm:right-5 z-[999] flex flex-col gap-2 pointer-events-none">
         {toasts.map((t) => (
@@ -302,7 +333,7 @@ export default function AllDocumentsPage() {
         {loading ? (
           <div className="p-8 text-center text-gray-400 text-sm animate-pulse">Loading documents...</div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-visible">
             <table className="w-full min-w-[1100px]">
               <thead>
                 <tr className="border-b border-gray-100">
@@ -393,14 +424,18 @@ export default function AllDocumentsPage() {
                       <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
                         <div className="relative">
                           <button
-                            onClick={() => setActiveMenu(activeMenu === doc.id ? null : doc.id)}
+                            onClick={(event) => toggleActionMenu(event, doc.id)}
                             title="More actions" aria-label="More actions"
                             className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all cursor-pointer ${activeMenu === doc.id ? 'bg-[#0097B2]/10 text-[#0097B2]' : 'text-gray-400 hover:bg-gray-100 hover:text-[#1a2340]'}`}
                           >
                             <i className="ri-more-2-fill text-base" />
                           </button>
-                          {activeMenu === doc.id && (
-                            <div className="absolute right-0 top-10 w-52 bg-white border border-gray-200 rounded-2xl overflow-hidden z-40 py-1.5">
+                          {activeMenu === doc.id && activeMenuPosition && (
+                            <div
+                              className="fixed w-52 bg-white border border-gray-200 rounded-2xl overflow-hidden z-[10000] py-1.5 shadow-2xl"
+                              style={{ top: activeMenuPosition.top, left: activeMenuPosition.left }}
+                              onClick={(event) => event.stopPropagation()}
+                            >
                               <button onClick={() => openViewer(doc)} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
                                 <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-eye-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
                                 <span className="font-medium">View Document</span>

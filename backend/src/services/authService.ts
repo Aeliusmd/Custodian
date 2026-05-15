@@ -343,6 +343,7 @@ export const authService = {
       phone: "",
       language: "English",
       bio: "",
+      avatarDataUrl: "",
     });
 
     const token = jwt.sign({ sub: newId, role: "ORG_ADMIN" }, jwtSecret, jwtSignOptions);

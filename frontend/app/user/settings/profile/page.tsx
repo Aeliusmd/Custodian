@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 const TEAL = '#0097B2';
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
@@ -13,6 +13,7 @@ interface UserProfile {
   language: string;
   role: string;
   bio: string;
+  avatarDataUrl?: string;
 }
 
 interface Toast {
@@ -23,7 +24,7 @@ interface Toast {
 
 export default function UserProfilePage() {
   const [profile, setProfile] = useState<UserProfile>({
-    firstName: '', lastName: '', email: '', phone: '', language: 'English', role: 'USER', bio: '',
+    firstName: '', lastName: '', email: '', phone: '', language: 'English', role: 'USER', bio: '', avatarDataUrl: '',
   });
   const [original, setOriginal] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,9 +36,9 @@ export default function UserProfilePage() {
   const [confirmPass, setConfirmPass] = useState('');
   const [passErrors, setPassErrors] = useState<Record<string, string>>({});
   const [changingPass, setChangingPass] = useState(false);
-  const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -98,6 +99,27 @@ export default function UserProfilePage() {
 
   const handleCancel = () => {
     if (original) { setProfile(original); setProfileErrors({}); }
+  };
+
+  const handleAvatarFile = (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('Please choose an image file', 'error');
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      showToast('Avatar image must be 1 MB or smaller', 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        setProfile((p) => ({ ...p, avatarDataUrl: result }));
+      }
+    };
+    reader.onerror = () => showToast('Failed to read avatar image', 'error');
+    reader.readAsDataURL(file);
   };
 
   const handlePasswordChange = async () => {
@@ -176,13 +198,43 @@ export default function UserProfilePage() {
       <div className="max-w-3xl space-y-6">
         {/* Avatar card */}
         <div className="bg-white rounded-2xl border border-gray-200 p-6 flex items-center gap-5">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0" style={{ background: '#d97706' }}>
-            {initials}
+          <div className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0 overflow-hidden" style={{ background: '#d97706' }}>
+            {profile.avatarDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={profile.avatarDataUrl} alt="Profile avatar" className="h-full w-full object-cover" />
+            ) : (
+              initials
+            )}
           </div>
           <div>
             <p className="text-base font-bold text-[#1a2340]">{profile.firstName} {profile.lastName}</p>
             <p className="text-sm mt-0.5 text-amber-600">User</p>
-            <button className="text-sm font-semibold mt-1 cursor-pointer hover:underline" style={{ color: TEAL }}>Change Avatar</button>
+            <div className="mt-1 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => avatarInputRef.current?.click()}
+                className="text-sm font-semibold cursor-pointer hover:underline"
+                style={{ color: TEAL }}
+              >
+                Change Avatar
+              </button>
+              {profile.avatarDataUrl && (
+                <button
+                  type="button"
+                  onClick={() => setProfile((p) => ({ ...p, avatarDataUrl: '' }))}
+                  className="text-sm font-semibold text-gray-400 hover:text-red-500 cursor-pointer"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(event) => handleAvatarFile(event.target.files?.[0])}
+            />
           </div>
         </div>
 
@@ -289,10 +341,17 @@ export default function UserProfilePage() {
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1.5">Current Password</label>
               <div className={`flex items-center border rounded-lg px-3.5 py-2.5 gap-2 transition-all ${passErrors.currentPass ? 'border-red-300 bg-red-50' : 'border-gray-200 focus-within:border-[#0097B2]'}`}>
-                <input type={showCurrent ? 'text' : 'password'} value={currentPass} onChange={(e) => setCurrentPass(e.target.value)} placeholder="Enter current password" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
-                <button type="button" onClick={() => setShowCurrent(!showCurrent)} className="text-gray-400 hover:text-gray-600 cursor-pointer w-4 h-4 flex items-center justify-center">
-                  <i className={showCurrent ? 'ri-eye-off-line' : 'ri-eye-line'} />
-                </button>
+                <input
+                  type="password"
+                  value={currentPass}
+                  onChange={(e) => setCurrentPass(e.target.value)}
+                  placeholder="Enter current password"
+                  name="profile-current-password"
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent"
+                />
               </div>
               {passErrors.currentPass && <p className="text-xs text-red-500 mt-1">{passErrors.currentPass}</p>}
             </div>
@@ -300,7 +359,7 @@ export default function UserProfilePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">New Password</label>
                 <div className={`flex items-center border rounded-lg px-3.5 py-2.5 gap-2 transition-all ${passErrors.newPass ? 'border-red-300 bg-red-50' : 'border-gray-200 focus-within:border-[#0097B2]'}`}>
-                  <input type={showNew ? 'text' : 'password'} value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="Min. 8 characters" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
+                  <input type={showNew ? 'text' : 'password'} value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="Min. 8 characters" autoComplete="new-password" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
                   <button type="button" onClick={() => setShowNew(!showNew)} className="text-gray-400 hover:text-gray-600 cursor-pointer w-4 h-4 flex items-center justify-center">
                     <i className={showNew ? 'ri-eye-off-line' : 'ri-eye-line'} />
                   </button>
@@ -318,7 +377,7 @@ export default function UserProfilePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">Confirm New Password</label>
                 <div className={`flex items-center border rounded-lg px-3.5 py-2.5 gap-2 transition-all ${passErrors.confirmPass ? 'border-red-300 bg-red-50' : 'border-gray-200 focus-within:border-[#0097B2]'}`}>
-                  <input type={showConfirm ? 'text' : 'password'} value={confirmPass} onChange={(e) => setConfirmPass(e.target.value)} placeholder="Re-enter new password" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
+                  <input type={showConfirm ? 'text' : 'password'} value={confirmPass} onChange={(e) => setConfirmPass(e.target.value)} placeholder="Re-enter new password" autoComplete="new-password" className="flex-1 text-sm text-[#1a2340] outline-none bg-transparent" />
                   <button type="button" onClick={() => setShowConfirm(!showConfirm)} className="text-gray-400 hover:text-gray-600 cursor-pointer w-4 h-4 flex items-center justify-center">
                     <i className={showConfirm ? 'ri-eye-off-line' : 'ri-eye-line'} />
                   </button>

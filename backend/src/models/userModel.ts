@@ -13,6 +13,7 @@ export interface UserRecord {
   phone: string;
   language: string;
   bio: string;
+  avatarDataUrl: string;
 }
 
 /** Maps a role string from the tenant DB to the application Role type. */
@@ -31,6 +32,38 @@ const getActiveOrgs = async (): Promise<Array<{ id: string; db_name: string }>> 
   return rows as Array<{ id: string; db_name: string }>;
 };
 
+const ensuredProfileColumns = new Set<string>();
+
+const ensureUserProfileColumns = async (dbName: string): Promise<void> => {
+  if (ensuredProfileColumns.has(dbName)) return;
+  const [rows] = await dbPool.query(
+    `SELECT LOWER(column_name) AS column_name
+       FROM information_schema.columns
+      WHERE table_schema = ?
+        AND table_name = 'users'
+        AND column_name IN ('phone', 'language', 'bio', 'avatar_data_url')`,
+    [dbName],
+  );
+  const existing = new Set(
+    (rows as Array<{ column_name?: string; COLUMN_NAME?: string }>)
+      .map((row) => (row.column_name ?? row.COLUMN_NAME ?? "").toLowerCase())
+      .filter(Boolean),
+  );
+  if (!existing.has("phone")) {
+    await dbPool.query(`ALTER TABLE \`${dbName}\`.users ADD COLUMN phone VARCHAR(60) NULL`);
+  }
+  if (!existing.has("language")) {
+    await dbPool.query(`ALTER TABLE \`${dbName}\`.users ADD COLUMN language VARCHAR(40) NOT NULL DEFAULT 'English'`);
+  }
+  if (!existing.has("bio")) {
+    await dbPool.query(`ALTER TABLE \`${dbName}\`.users ADD COLUMN bio TEXT NULL`);
+  }
+  if (!existing.has("avatar_data_url")) {
+    await dbPool.query(`ALTER TABLE \`${dbName}\`.users ADD COLUMN avatar_data_url MEDIUMTEXT NULL`);
+  }
+  ensuredProfileColumns.add(dbName);
+};
+
 export const userModel = {
   /**
    * Finds a tenant user by their primary key, searching across all active
@@ -42,11 +75,13 @@ export const userModel = {
   async findById(id: string): Promise<UserRecord | null> {
     const orgs = await getActiveOrgs();
     for (const org of orgs) {
+      await ensureUserProfileColumns(org.db_name);
       const [rows] = await dbPool.query(
         `SELECT id, name, email, password_hash AS passwordHash, role, status,
                 COALESCE(phone, '') AS phone,
                 COALESCE(language, 'English') AS language,
-                COALESCE(bio, '') AS bio
+                COALESCE(bio, '') AS bio,
+                COALESCE(avatar_data_url, '') AS avatarDataUrl
            FROM \`${org.db_name}\`.users
           WHERE id = ?
           LIMIT 1`,
@@ -62,6 +97,7 @@ export const userModel = {
         phone: string;
         language: string;
         bio: string;
+        avatarDataUrl: string;
       }>)[0];
       if (row) {
         return {
@@ -75,6 +111,7 @@ export const userModel = {
           phone: row.phone,
           language: row.language,
           bio: row.bio,
+          avatarDataUrl: row.avatarDataUrl,
         };
       }
     }
@@ -92,11 +129,13 @@ export const userModel = {
     const normalizedEmail = email.trim().toLowerCase();
     const orgs = await getActiveOrgs();
     for (const org of orgs) {
+      await ensureUserProfileColumns(org.db_name);
       const [rows] = await dbPool.query(
         `SELECT id, name, email, password_hash AS passwordHash, role, status,
                 COALESCE(phone, '') AS phone,
                 COALESCE(language, 'English') AS language,
-                COALESCE(bio, '') AS bio
+                COALESCE(bio, '') AS bio,
+                COALESCE(avatar_data_url, '') AS avatarDataUrl
            FROM \`${org.db_name}\`.users
           WHERE LOWER(email) = ?
           LIMIT 1`,
@@ -112,6 +151,7 @@ export const userModel = {
         phone: string;
         language: string;
         bio: string;
+        avatarDataUrl: string;
       }>)[0];
       if (row) {
         return {
@@ -125,6 +165,7 @@ export const userModel = {
           phone: row.phone,
           language: row.language,
           bio: row.bio,
+          avatarDataUrl: row.avatarDataUrl,
         };
       }
     }
@@ -140,7 +181,7 @@ export const userModel = {
    */
   async update(
     id: string,
-    data: Partial<{ name: string; phone: string; language: string; bio: string }>,
+    data: Partial<{ name: string; phone: string; language: string; bio: string; avatarDataUrl: string }>,
   ): Promise<void> {
     const updates: string[] = [];
     const params: Array<string> = [];
@@ -149,12 +190,14 @@ export const userModel = {
     if (data.phone !== undefined) { updates.push("phone = ?"); params.push(data.phone); }
     if (data.language !== undefined) { updates.push("language = ?"); params.push(data.language); }
     if (data.bio !== undefined) { updates.push("bio = ?"); params.push(data.bio); }
+    if (data.avatarDataUrl !== undefined) { updates.push("avatar_data_url = ?"); params.push(data.avatarDataUrl); }
 
     if (updates.length === 0) return;
 
     params.push(id);
     const orgs = await getActiveOrgs();
     for (const org of orgs) {
+      await ensureUserProfileColumns(org.db_name);
       const [result] = await dbPool.query(
         `UPDATE \`${org.db_name}\`.users SET ${updates.join(", ")} WHERE id = ?`,
         params,

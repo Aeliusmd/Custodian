@@ -81,9 +81,9 @@ export default function OrgAdminDashboard() {
   const weeklyTotal = uploadActivity.reduce((sum, day) => sum + day.count, 0);
 
   const statsCards = [
-    { label: 'Total Documents', value: String(dashboard?.stats.totalDocuments ?? 0), icon: 'ri-file-text-line', color: TEAL, change: 'Tenant scoped' },
-    { label: 'Uploaded Today', value: String(dashboard?.stats.uploadedToday ?? 0), icon: 'ri-upload-cloud-2-line', color: '#16a34a', change: 'Today' },
-    { label: 'Total Categories', value: String(dashboard?.stats.totalCategories ?? 0), icon: 'ri-folder-3-line', color: '#d97706', change: 'Tenant scoped' },
+    { label: 'Total Documents', value: String(dashboard?.stats.totalDocuments ?? 0), icon: 'ri-file-text-line', color: TEAL, change: 'Tenant scoped', isStorage: false },
+    { label: 'Uploaded Today', value: String(dashboard?.stats.uploadedToday ?? 0), icon: 'ri-upload-cloud-2-line', color: '#16a34a', change: 'Today', isStorage: false },
+    { label: 'Total Categories', value: String(dashboard?.stats.totalCategories ?? 0), icon: 'ri-folder-3-line', color: '#d97706', change: 'Tenant scoped', isStorage: false },
     {
       label: 'Storage Used',
       value: `${dashboard?.stats.storagePercent ?? 0}%`,
