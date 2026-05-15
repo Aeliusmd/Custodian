@@ -12,21 +12,15 @@ const settingsTabs = [
     sublabel: 'Personal info & password',
     icon: 'ri-user-line',
   },
-  {
-    path: '/user/settings/notifications',
-    label: 'Notifications',
-    sublabel: 'Manage your alerts',
-    icon: 'ri-notification-3-line',
-  },
 ];
 
 export default function UserSettingsLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   return (
-    <div className="flex h-full min-h-0 bg-[#f8f9fb] font-inter">
+    <div className="flex h-screen overflow-hidden bg-[#f8f9fb] font-inter">
       {/* Left sidebar */}
-      <aside className="w-64 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col py-6">
+      <aside className="w-64 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col py-6 overflow-y-auto">
         <div className="px-5 mb-6">
           <h1 className="text-lg font-bold text-[#1a2340]">Settings</h1>
           <p className="text-xs text-gray-400 mt-0.5">Manage your account &amp; preferences</p>
@@ -72,8 +66,8 @@ export default function UserSettingsLayout({ children }: { children: React.React
         </nav>
       </aside>
 
-      {/* Content area */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Content area — only this panel scrolls */}
+      <div className="flex-1 overflow-y-auto h-full">
         {children}
       </div>
     </div>

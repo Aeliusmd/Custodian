@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 
 const TEAL = '#0097B2';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
 
 type UserLayoutProps = {
   children: ReactNode;
@@ -14,11 +15,45 @@ type UserLayoutProps = {
 export default function UserLayout({ children, userId }: UserLayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [showSignOutModal, setShowSignOutModal] = useState(false);
+  const [sessionUser, setSessionUser] = useState<{ fullName: string; email: string } | null>(null);
 
   const pathname = usePathname();
   const router = useRouter();
 
-  const base = `/user/${userId}`;
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/auth/session`, { credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return (await res.json()) as { user?: { fullName?: string; email?: string } };
+      })
+      .then((data) => {
+        if (!data?.user) return;
+        setSessionUser({
+          fullName: data.user.fullName ?? '',
+          email: data.user.email ?? '',
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSignOut = async () => {
+    setShowSignOutModal(false);
+    try {
+      await fetch(`${API_BASE_URL}/auth/signout`, { method: 'POST', credentials: 'include' });
+    } catch { /* redirect anyway */ }
+    router.push('/auth/signin');
+  };
+
+  const displayName = sessionUser?.fullName?.trim() || 'User';
+  const initials = displayName
+    .split(' ')
+    .filter(Boolean)
+    .map((n) => n[0]?.toUpperCase())
+    .join('')
+    .slice(0, 2) || 'U';
+
+  const base = '/user';
   const navItems = [
     { path: `${base}/dashboard`, label: 'Dashboard', icon: 'ri-dashboard-line' },
     { path: `${base}/upload-documents`, label: 'Upload Documents', icon: 'ri-upload-cloud-2-line' },
@@ -42,6 +77,26 @@ export default function UserLayout({ children, userId }: UserLayoutProps) {
 
   return (
     <div className="flex min-h-screen bg-[#f8f9fb] font-inter">
+
+      {/* Sign-out confirmation modal */}
+      {showSignOutModal && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setShowSignOutModal(false)} />
+          <div className="relative bg-white rounded-2xl w-full max-w-sm mx-4 p-6 flex flex-col items-center gap-4">
+            <div className="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center">
+              <i className="ri-logout-box-r-line text-2xl text-red-500" />
+            </div>
+            <div className="text-center">
+              <h3 className="text-base font-semibold text-[#1a2340] mb-1">Sign out of Custodox?</h3>
+              <p className="text-sm text-gray-400">You will be returned to the sign in page.</p>
+            </div>
+            <div className="flex gap-3 w-full">
+              <button onClick={() => setShowSignOutModal(false)} className="flex-1 px-4 py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors whitespace-nowrap">Cancel</button>
+              <button onClick={() => void handleSignOut()} className="flex-1 px-4 py-2.5 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors whitespace-nowrap">Yes, Sign Out</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sidebar */}
       <aside className={`
@@ -93,19 +148,26 @@ export default function UserLayout({ children, userId }: UserLayoutProps) {
           })}
         </nav>
 
-        {/* User */}
-        <div className="border-t border-gray-100 py-3 px-2">
-          <div className={`flex items-center gap-3 px-3 py-2.5 ${collapsed ? 'justify-center' : ''}`}>
-            <div className="w-7 h-7 rounded-full flex items-center justify-center bg-orange-500 text-white text-xs font-bold">
-              AH
+        {/* User + Sign Out */}
+        <div className="border-t border-gray-100 py-3 px-2 space-y-1">
+          <div className={`flex items-center gap-3 px-3 py-2 ${collapsed ? 'justify-center' : ''}`}>
+            <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-bold" style={{ background: TEAL }}>
+              {initials}
             </div>
             {!collapsed && (
-              <div>
-                <div className="text-xs font-semibold">Alex Harrison</div>
-                <div className="text-[10px] text-amber-600">User</div>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-[#1a2340] truncate">{displayName}</div>
+                <div className="text-[10px]" style={{ color: TEAL }}>User</div>
               </div>
             )}
           </div>
+          <button
+            onClick={() => setShowSignOutModal(true)}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-red-500 hover:bg-red-50 transition-colors ${collapsed ? 'justify-center' : ''}`}
+          >
+            <i className="ri-logout-box-r-line flex-shrink-0" />
+            {!collapsed && <span>Sign Out</span>}
+          </button>
         </div>
       </aside>
 

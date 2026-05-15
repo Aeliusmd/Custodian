@@ -14,8 +14,8 @@ export default function UserIndexPage() {
         if (!res.ok) throw new Error('Not authenticated');
         return res.json() as Promise<{ id: string }>;
       })
-      .then(({ id }) => {
-        router.replace(`/user/${id}/dashboard`);
+      .then(() => {
+        router.replace('/user/dashboard');
       })
       .catch(() => {
         router.replace('/sign-in');

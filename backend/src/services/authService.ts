@@ -5,6 +5,7 @@ import { dbPool } from "../config/db";
 import { env } from "../config/env";
 import { superAdminAuthModel } from "../models/superAdminAuthModel";
 import { emailService } from "./emailService";
+import { notifyOrgAdmin } from "./notificationService";
 import { userModel } from "../models/userModel";
 import type { LoginIdentity, LoginPayload, SafeUser, SignupPayload } from "../types/auth";
 
@@ -25,8 +26,8 @@ interface JwtPayload {
   organizationDbName?: string;
 }
 
-const toSafeUserFromMemory = (userId: string): SafeUser => {
-  const user = userModel.findById(userId);
+const toSafeUserFromMemory = async (userId: string): Promise<SafeUser> => {
+  const user = await userModel.findById(userId);
   if (!user) {
     throw new Error("User not found");
   }
@@ -291,11 +292,23 @@ export const authService = {
       jwtSecret,
       jwtSignOptions,
     );
-    return {
+
+    const authResult = {
       token,
       user: toSafeUser(challenge.user),
       rememberMe: challenge.rememberMe,
     };
+
+    if (authResult.user.role !== "ORG_ADMIN" && authResult.user.organizationId) {
+      void notifyOrgAdmin(authResult.user.organizationId, "login_notifications", {
+        actorEmail: authResult.user.email,
+        userName: authResult.user.fullName,
+        userEmail: authResult.user.email,
+        loginTime: new Date().toLocaleString(),
+      });
+    }
+
+    return authResult;
   },
 
   async resendLoginOtp(challengeId: string): Promise<void> {
@@ -312,7 +325,7 @@ export const authService = {
   },
 
   async signup(payload: SignupPayload): Promise<AuthResult> {
-    const existing = userModel.findByEmail(payload.email);
+    const existing = await userModel.findByEmail(payload.email);
     if (existing) {
       throw new Error("Email already in use");
     }
@@ -327,13 +340,16 @@ export const authService = {
       role: "ORG_ADMIN",
       organizationId: `org_${payload.organizationName.toLowerCase().replace(/\s+/g, "_")}`,
       isActive: true,
+      phone: "",
+      language: "English",
+      bio: "",
     });
 
     const token = jwt.sign({ sub: newId, role: "ORG_ADMIN" }, jwtSecret, jwtSignOptions);
 
     return {
       token,
-      user: toSafeUserFromMemory(newId),
+      user: await toSafeUserFromMemory(newId),
     };
   },
 

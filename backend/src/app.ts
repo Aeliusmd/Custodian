@@ -7,6 +7,7 @@ import authRoutes from "./routes/authRoutes";
 import meRoute from "./routes/meRoute";
 import protectedRoutes from "./routes/protectedRoutes";
 import settingsRoutes from "./routes/settingsRoutes";
+import userSettingsRoutes from "./routes/userSettingsRoutes";
 import superAdminRoutes from "./routes/superAdminRoutes";
 
 const app = express();
@@ -30,7 +31,7 @@ app.use("/auth", authRoutes);
 app.use("/api/me", meRoute);
 app.use("/protected", protectedRoutes);
 app.use("/org-admin/settings", requireAuth, requireRole("ORG_ADMIN"), settingsRoutes);
-app.use("/user/settings", requireAuth, requireRole("USER", "ORG_ADMIN"), settingsRoutes);
+app.use("/user/settings", requireAuth, requireRole("USER", "ORG_ADMIN"), userSettingsRoutes);
 app.use("/super-admin/settings", requireAuth, requireRole("SUPER_ADMIN"), settingsRoutes);
 app.use("/super-admin", requireAuth, requireRole("SUPER_ADMIN"), superAdminRoutes);
 

@@ -12,8 +12,9 @@ const roleDashboardMap: Record<Role, string> = {
 const setSessionCookie = (res: Response, token: string, rememberMe?: boolean) => {
   res.cookie("access_token", token, {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: "strict", // CSRF protection - strict blocks cross-site requests
     secure: isProduction,
+    path: "/",
     maxAge: rememberMe ? 1000 * 60 * 60 * 24 * 7 : 1000 * 60 * 60 * 24,
   });
 };
@@ -87,7 +88,7 @@ export const authController = {
   },
 
   logout(_req: Request, res: Response) {
-    res.clearCookie("access_token");
+    res.clearCookie("access_token", { path: "/", httpOnly: true, secure: isProduction });
     return res.status(200).json({ success: true });
   },
 

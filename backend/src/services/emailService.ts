@@ -60,4 +60,146 @@ export const emailService = {
              <p>If you didn't expect this, please ignore this email.</p>`,
     });
   },
+
+  /**
+   * Notifies an org-admin that a new document was uploaded.
+   *
+   * @param opts.to           - Admin's email address.
+   * @param opts.adminName    - Admin's display name.
+   * @param opts.actorName    - Name of the user who uploaded the document.
+   * @param opts.fileName     - Name of the uploaded file.
+   * @param opts.categoryName - Category the document was filed under.
+   * @param opts.orgName      - Organisation display name.
+   */
+  async sendDocumentUploadNotification(opts: {
+    to: string;
+    adminName: string;
+    actorName?: string | undefined;
+    fileName?: string | undefined;
+    categoryName?: string | undefined;
+    orgName?: string | undefined;
+  }): Promise<void> {
+    if (!transporter) {
+      console.log(`[NOTIFY-FALLBACK] document_upload to=${opts.to} file=${opts.fileName ?? "unknown"}`);
+      return;
+    }
+
+    await transporter.sendMail({
+      from: env.smtpFrom,
+      to: opts.to,
+      subject: `[Custodox] New document uploaded${opts.fileName ? ": " + opts.fileName : ""}`,
+      html: `<p>Hi ${opts.adminName},</p>
+<p><strong>${opts.actorName ?? "A user"}</strong> uploaded a new document in <strong>${opts.orgName ?? "your organisation"}</strong>.</p>
+<ul>
+  <li><strong>File:</strong> ${opts.fileName ?? "Unknown"}</li>
+  <li><strong>Category:</strong> ${opts.categoryName ?? "Uncategorised"}</li>
+</ul>
+<p>Log in to Custodox to review it.</p>`,
+    });
+  },
+
+  /**
+   * Notifies an org-admin that a document was shared.
+   *
+   * @param opts.to           - Admin's email address.
+   * @param opts.adminName    - Admin's display name.
+   * @param opts.actorName    - Name of the user who shared the document.
+   * @param opts.fileName     - Name of the shared document.
+   * @param opts.categoryName - Category the document belongs to.
+   * @param opts.orgName      - Organisation display name.
+   */
+  async sendDocumentSharedNotification(opts: {
+    to: string;
+    adminName: string;
+    actorName?: string | undefined;
+    fileName?: string | undefined;
+    categoryName?: string | undefined;
+    orgName?: string | undefined;
+  }): Promise<void> {
+    if (!transporter) {
+      console.log(`[NOTIFY-FALLBACK] document_shared to=${opts.to} file=${opts.fileName ?? "unknown"}`);
+      return;
+    }
+
+    await transporter.sendMail({
+      from: env.smtpFrom,
+      to: opts.to,
+      subject: `[Custodox] Document shared: ${opts.fileName ?? "a document"}`,
+      html: `<p>Hi ${opts.adminName},</p>
+<p><strong>${opts.actorName ?? "A user"}</strong> shared a document in <strong>${opts.orgName ?? "your organisation"}</strong>.</p>
+<ul>
+  <li><strong>File:</strong> ${opts.fileName ?? "Unknown"}</li>
+  <li><strong>Category:</strong> ${opts.categoryName ?? "Uncategorised"}</li>
+</ul>
+<p>Log in to Custodox to review it.</p>`,
+    });
+  },
+
+  /**
+   * Notifies an org-admin of a team membership change (user added, updated, or removed).
+   *
+   * @param opts.to          - Admin's email address.
+   * @param opts.adminName   - Admin's display name.
+   * @param opts.actorName   - Name of the admin who made the change.
+   * @param opts.actionType  - 'added' | 'updated' | 'removed'.
+   * @param opts.userName    - Display name of the affected user.
+   * @param opts.userEmail   - Email of the affected user.
+   * @param opts.orgName     - Organisation display name.
+   */
+  async sendUserManagementNotification(opts: {
+    to: string;
+    adminName: string;
+    actorName?: string | undefined;
+    actionType?: string | undefined;
+    userName?: string | undefined;
+    userEmail?: string | undefined;
+    orgName?: string | undefined;
+  }): Promise<void> {
+    if (!transporter) {
+      console.log(`[NOTIFY-FALLBACK] team_update to=${opts.to} action=${opts.actionType ?? "changed"}`);
+      return;
+    }
+
+    await transporter.sendMail({
+      from: env.smtpFrom,
+      to: opts.to,
+      subject: `[Custodox] Team update: user ${opts.actionType ?? "changed"}`,
+      html: `<p>Hi ${opts.adminName},</p>
+<p><strong>${opts.actorName ?? "An admin"}</strong> ${opts.actionType ?? "changed"} user <strong>${opts.userName ?? "unknown"}</strong>${opts.userEmail ? " (" + opts.userEmail + ")" : ""} in <strong>${opts.orgName ?? "your organisation"}</strong>.</p>
+<p>Log in to Custodox to review the team roster.</p>`,
+    });
+  },
+
+  /**
+   * Notifies an org-admin that a user has signed in.
+   *
+   * @param opts.to        - Admin's email address.
+   * @param opts.adminName - Admin's display name.
+   * @param opts.userName  - Display name of the user who signed in.
+   * @param opts.userEmail - Email of the user who signed in.
+   * @param opts.loginTime - Human-readable login timestamp.
+   * @param opts.orgName   - Organisation display name.
+   */
+  async sendLoginAlertNotification(opts: {
+    to: string;
+    adminName: string;
+    userName?: string | undefined;
+    userEmail?: string | undefined;
+    loginTime?: string | undefined;
+    orgName?: string | undefined;
+  }): Promise<void> {
+    if (!transporter) {
+      console.log(`[NOTIFY-FALLBACK] login_alert to=${opts.to} user=${opts.userName ?? "unknown"}`);
+      return;
+    }
+
+    await transporter.sendMail({
+      from: env.smtpFrom,
+      to: opts.to,
+      subject: `[Custodox] Login alert: ${opts.userName ?? "A user"} signed in`,
+      html: `<p>Hi ${opts.adminName},</p>
+<p><strong>${opts.userName ?? "A user"}</strong>${opts.userEmail ? " (" + opts.userEmail + ")" : ""} signed in to <strong>${opts.orgName ?? "your organisation"}</strong>${opts.loginTime ? " at " + opts.loginTime : ""}.</p>
+<p>If this was unexpected, please review your team's access in Custodox.</p>`,
+    });
+  },
 };

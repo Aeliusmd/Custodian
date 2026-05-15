@@ -7,6 +7,9 @@ backend/dist/
 frontend/.next/
 frontend/out/
 
+# Uploaded documents (local storage only)
+backend/storage/
+
 # Environment files
 .env
 .env.local
