@@ -21,12 +21,6 @@ export const env = {
   frontendBaseUrl: process.env.FRONTEND_BASE_URL ?? "http://localhost:3001",
   /** Root directory for tenant document files (`uploads/...`). */
   storageRoot: process.env.STORAGE_ROOT?.trim() || path.join(process.cwd(), "storage"),
-  /** Tesseract traineddata language codes, e.g. `eng` or `eng+sin` (see https://tesseract-ocr.github.io/tessdoc/Data-Files-in-different-versions.html). */
-  ocrLanguages: process.env.OCR_LANGUAGES?.trim() ?? "eng",
-  /** Max PDF pages to rasterize + OCR when the text layer is thin (cap for CPU/time). */
-  ocrPdfMaxPages: Math.max(1, Math.min(100, Number(process.env.OCR_PDF_MAX_PAGES ?? 30) || 30)),
-  /** PDF page render scale before OCR (higher = sharper, slower, more RAM). */
-  ocrViewportScale: Math.min(4, Math.max(1, Number(process.env.OCR_VIEWPORT_SCALE ?? 2) || 2)),
   ocrServiceUrl: (() => {
     const v = process.env.OCR_SERVICE_URL?.trim();
     if (v) return v;
