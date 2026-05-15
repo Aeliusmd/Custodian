@@ -6,14 +6,10 @@ import { readFile } from "fs/promises";
 import path from "path";
 import { dbPool } from "../config/db";
 import { env } from "../config/env";
-<<<<<<< HEAD
 import { enqueueDocumentOcr } from "../services/documentOcrQueue";
 import { absoluteFromStorageRoot, previewPageRelativePath, unlinkQuiet, writeUploadedDocumentFile } from "../services/documentStorageService";
 import { sanitizeStoredFileName } from "../utils/uploadFileName";
-=======
-import crypto from "crypto";
 import { notifyOrgAdmin } from "../services/notificationService";
->>>>>>> origin/dev_visal
 
 const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
@@ -355,15 +351,11 @@ const listDocumentsFromTenant = async (dbName: string, archived: boolean, upload
   }));
 };
 
-<<<<<<< HEAD
-const getDocumentFromTenant = async (dbName: string, id: string) => {
+const getDocumentFromTenant = async (dbName: string, id: string, uploadedBy?: string) => {
   await ensureTenantCategoriesSoftDeleteColumn(dbName);
   await ensureTenantDocumentsOcrSchema(dbName);
-=======
-const getDocumentFromTenant = async (dbName: string, id: string, uploadedBy?: string) => {
   const userFilter = uploadedBy ? `AND d.uploaded_by = ?` : "";
   const params: unknown[] = uploadedBy ? [id, uploadedBy] : [id];
->>>>>>> origin/dev_visal
   const [docs] = await dbPool.query(
     `SELECT d.id, d.doc_code, d.name, d.visibility, d.created_at, d.updated_at, d.file_path, d.ocr_text_path, d.ocr_status, d.file_size_kb, d.file_type, d.status, d.preview_page_count,
             COALESCE(c.name, 'Uncategorized') AS category_name,
@@ -942,7 +934,6 @@ export const protectedController = {
       }
 
       await conn.commit();
-<<<<<<< HEAD
       committed = true;
       if (mainAbsoluteForOcr) {
         enqueueDocumentOcr({
@@ -952,16 +943,14 @@ export const protectedController = {
           safeStorageName,
         });
       }
-=======
 
       void notifyOrgAdmin(req.user?.organizationId ?? "", "document_uploads", {
         actorName: req.user?.fullName,
         actorEmail: req.user?.email,
-        fileName: fileName,
+        fileName: displayName,
         categoryName: categoryId,
       });
 
->>>>>>> origin/dev_visal
       return res.status(201).json({
         id: documentId,
         docCode,
@@ -1684,7 +1673,6 @@ export const protectedController = {
     }
   },
 
-<<<<<<< HEAD
   async listUserDocuments(req: Request, res: Response) {
     try {
       const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
@@ -1694,8 +1682,9 @@ export const protectedController = {
       return res.status(200).json(docs);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load documents";
-=======
-  // User-scoped document operations - only allow access to own documents
+      return res.status(500).json({ message });
+    }
+  },
 
   async getUserDocument(req: Request, res: Response) {
     try {
@@ -1708,13 +1697,10 @@ export const protectedController = {
       return res.status(200).json(doc);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load document";
->>>>>>> origin/dev_visal
       return res.status(500).json({ message });
     }
   },
 
-<<<<<<< HEAD
-=======
   async updateUserDocumentArchiveStatus(req: Request, res: Response) {
     try {
       const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
@@ -1823,7 +1809,6 @@ export const protectedController = {
     }
   },
 
->>>>>>> origin/dev_visal
   async userDashboard(req: Request, res: Response) {
     try {
       if (!req.user?.organizationId) {

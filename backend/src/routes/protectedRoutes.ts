@@ -47,45 +47,18 @@ protectedRoutes.patch("/org-admin/documents/:id/archive", requireAuth, requireRo
 protectedRoutes.patch("/org-admin/documents/:id/metadata", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminDocumentMetadata);
 protectedRoutes.delete("/org-admin/documents/:id", requireAuth, requireRole("ORG_ADMIN"), protectedController.deleteOrgAdminDocument);
 
-// Legacy user routes (no userId in path)
 protectedRoutes.get("/user", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.userData);
 protectedRoutes.get("/user/dashboard", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.userDashboard);
 protectedRoutes.get("/user/categories", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.listOrgAdminCategories);
 protectedRoutes.get("/user/search", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.searchUserOwnDocuments);
 protectedRoutes.post("/user/documents/single", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.createOrgAdminSingleDocument);
-<<<<<<< HEAD
 protectedRoutes.post("/user/documents/bulk", requireAuth, requireRole("USER", "ORG_ADMIN"), memoryUploadBulk, protectedController.createOrgAdminBulkDocuments);
-protectedRoutes.get("/user/documents", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.listOrgAdminDocuments);
-protectedRoutes.get("/user/documents/:id", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.getOrgAdminDocument);
-protectedRoutes.patch("/user/documents/:id/archive", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.updateOrgAdminDocumentArchiveStatus);
-protectedRoutes.patch("/user/documents/:id/metadata", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.updateOrgAdminDocumentMetadata);
-protectedRoutes.delete("/user/documents/:id", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.deleteOrgAdminDocument);
-
-// User-scoped routes — /:userId in path, validated against JWT session
-protectedRoutes.get("/user/:userId", requireAuth, requireRole("USER", "ORG_ADMIN"), validateOwnUserId, protectedController.userData);
-protectedRoutes.get("/user/:userId/dashboard", requireAuth, requireRole("USER", "ORG_ADMIN"), validateOwnUserId, protectedController.userDashboard);
-protectedRoutes.get("/user/:userId/categories", requireAuth, requireRole("USER", "ORG_ADMIN"), validateOwnUserId, protectedController.listOrgAdminCategories);
-protectedRoutes.get("/user/:userId/search", requireAuth, requireRole("USER", "ORG_ADMIN"), validateOwnUserId, protectedController.searchUserDocuments);
-protectedRoutes.post("/user/:userId/documents/single", requireAuth, requireRole("USER", "ORG_ADMIN"), validateOwnUserId, protectedController.createOrgAdminSingleDocument);
-protectedRoutes.post("/user/:userId/documents/bulk", requireAuth, requireRole("USER", "ORG_ADMIN"), validateOwnUserId, memoryUploadBulk, protectedController.createOrgAdminBulkDocuments);
-protectedRoutes.get("/user/:userId/documents", requireAuth, requireRole("USER", "ORG_ADMIN"), validateOwnUserId, protectedController.listUserDocuments);
-protectedRoutes.get("/user/:userId/documents/:id", requireAuth, requireRole("USER", "ORG_ADMIN"), validateOwnUserId, protectedController.getOrgAdminDocument);
-protectedRoutes.patch("/user/:userId/documents/:id/archive", requireAuth, requireRole("USER", "ORG_ADMIN"), validateOwnUserId, protectedController.updateOrgAdminDocumentArchiveStatus);
-protectedRoutes.patch("/user/:userId/documents/:id/metadata", requireAuth, requireRole("USER", "ORG_ADMIN"), validateOwnUserId, protectedController.updateOrgAdminDocumentMetadata);
-protectedRoutes.delete("/user/:userId/documents/:id", requireAuth, requireRole("USER", "ORG_ADMIN"), validateOwnUserId, protectedController.deleteOrgAdminDocument);
-
-=======
-protectedRoutes.post("/user/documents/bulk", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.createOrgAdminBulkDocuments);
 protectedRoutes.get("/user/documents", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.listUserDocuments);
 protectedRoutes.get("/user/documents/:id", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.getUserDocument);
 protectedRoutes.patch("/user/documents/:id/archive", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.updateUserDocumentArchiveStatus);
 protectedRoutes.patch("/user/documents/:id/metadata", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.updateUserDocumentMetadata);
 protectedRoutes.delete("/user/documents/:id", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.deleteUserDocument);
 
-// NOTE: User-scoped routes removed - using session-based identification via req.user.id
-// All /user/* routes now use the authenticated session, not URL userId
-// Legacy routes with :userId were removed for cleaner URLs (ADR-004)
->>>>>>> origin/dev_visal
 protectedRoutes.get(
   "/super-admin",
   requireAuth,

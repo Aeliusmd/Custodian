@@ -27,6 +27,17 @@ export const env = {
   ocrPdfMaxPages: Math.max(1, Math.min(100, Number(process.env.OCR_PDF_MAX_PAGES ?? 30) || 30)),
   /** PDF page render scale before OCR (higher = sharper, slower, more RAM). */
   ocrViewportScale: Math.min(4, Math.max(1, Number(process.env.OCR_VIEWPORT_SCALE ?? 2) || 2)),
+  ocrServiceUrl: (() => {
+    const v = process.env.OCR_SERVICE_URL?.trim();
+    if (v) return v;
+    if ((process.env.NODE_ENV ?? "development") === "production") return "";
+    return "http://127.0.0.1:8765/ocr";
+  })(),
+  ocrServiceTimeoutMs: Math.max(10_000, Number(process.env.OCR_SERVICE_TIMEOUT_MS ?? 600_000) || 600_000),
+  ocrPdfMinNativeCharsToSkipExternal: Math.max(
+    0,
+    Number(process.env.OCR_PDF_MIN_NATIVE_CHARS_TO_SKIP_EXTERNAL ?? 200) || 200,
+  ),
   /** Directory for `app.log` (created if missing). */
   logDir: process.env.LOG_DIR?.trim() || path.join(process.cwd(), "logs"),
   logFileName: process.env.LOG_FILE?.trim() || "app.log",

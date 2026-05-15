@@ -25,8 +25,29 @@ export interface RecentActivityItem {
   admin: string;
 }
 
+export interface DashboardTopOrg {
+  name: string;
+  plan: string;
+  revenue: string;
+  status: "Active" | "Inactive";
+  docs: string;
+}
+
+export interface DashboardPlanDistributionItem {
+  label: string;
+  count: number;
+}
+
+export interface DashboardOrgGrowthItem {
+  month: string;
+  count: number;
+}
+
 export interface SuperAdminDashboardSummary {
   kpis: DashboardKpi[];
   topupStats: DashboardTopUpStat[];
   recentActivity: RecentActivityItem[];
+  topOrgs: DashboardTopOrg[];
+  planDistribution: DashboardPlanDistributionItem[];
+  orgGrowth: DashboardOrgGrowthItem[];
 }
