@@ -53,7 +53,7 @@ export default function UserLayout({ children, userId }: UserLayoutProps) {
     .join('')
     .slice(0, 2) || 'U';
 
-  const base = `/user/${userId}`;
+  const base = '/user';
   const navItems = [
     { path: `${base}/dashboard`, label: 'Dashboard', icon: 'ri-dashboard-line' },
     { path: `${base}/upload-documents`, label: 'Upload Documents', icon: 'ri-upload-cloud-2-line' },

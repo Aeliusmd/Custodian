@@ -218,7 +218,9 @@ const listDocumentsFromTenant = async (dbName: string, archived: boolean, upload
   }));
 };
 
-const getDocumentFromTenant = async (dbName: string, id: string) => {
+const getDocumentFromTenant = async (dbName: string, id: string, uploadedBy?: string) => {
+  const userFilter = uploadedBy ? `AND d.uploaded_by = ?` : "";
+  const params: unknown[] = uploadedBy ? [id, uploadedBy] : [id];
   const [docs] = await dbPool.query(
     `SELECT d.id, d.doc_code, d.name, d.visibility, d.created_at, d.updated_at, d.file_path, d.file_size_kb, d.file_type, d.status,
             COALESCE(c.name, 'Uncategorized') AS category_name,
@@ -227,9 +229,10 @@ const getDocumentFromTenant = async (dbName: string, id: string) => {
        LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
        LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
       WHERE d.id = ?
+        ${userFilter}
         AND d.status <> 'deleted'
       LIMIT 1`,
-    [id],
+    params,
   );
   const row = (docs as Array<{
     id: string;
@@ -1183,6 +1186,131 @@ export const protectedController = {
     }
   },
 
+  // User-scoped document operations - only allow access to own documents
+
+  async getUserDocument(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const id = asString(req.params.id).trim();
+      if (!id) return res.status(400).json({ message: "Document id is required" });
+      const doc = await getDocumentFromTenant(dbName, id, req.user?.id);
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+      return res.status(200).json(doc);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load document";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async updateUserDocumentArchiveStatus(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const id = asString(req.params.id).trim();
+      if (!id) return res.status(400).json({ message: "Document id is required" });
+      const archived = Boolean((req.body as { archived?: boolean })?.archived);
+      const [result] = await dbPool.query(
+        `UPDATE \`${dbName}\`.documents
+            SET status = ?, updated_at = NOW()
+          WHERE id = ?
+            AND uploaded_by = ?
+            AND status <> 'deleted'
+          LIMIT 1`,
+        [archived ? "archived" : "active", id, req.user?.id],
+      );
+      if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) {
+        return res.status(404).json({ message: "Document not found or access denied" });
+      }
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update archive status";
+      return res.status(400).json({ message });
+    }
+  },
+
+  async updateUserDocumentMetadata(req: Request, res: Response) {
+    const conn = await dbPool.getConnection();
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const id = asString(req.params.id).trim();
+      if (!id) return res.status(400).json({ message: "Document id is required" });
+      const metadata = ((req.body as { metadata?: Record<string, string> })?.metadata ?? {}) as Record<string, string>;
+
+      await conn.beginTransaction();
+      const [docRows] = await conn.query(
+        `SELECT category_id
+           FROM \`${dbName}\`.documents
+          WHERE id = ?
+            AND uploaded_by = ?
+            AND status <> 'deleted'
+          LIMIT 1`,
+        [id, req.user?.id],
+      );
+      const doc = (docRows as Array<{ category_id: string }>)[0];
+      if (!doc?.category_id) {
+        await conn.rollback();
+        return res.status(404).json({ message: "Document not found or access denied" });
+      }
+
+      const [fieldRows] = await conn.query(
+        `SELECT id, field_name
+           FROM \`${dbName}\`.category_metadata_fields
+          WHERE category_id = ?`,
+        [doc.category_id],
+      );
+      const allowedFields = new Map(
+        (fieldRows as Array<{ id: string; field_name: string }>).map((f) => [f.field_name.toLowerCase(), f.id]),
+      );
+
+      for (const [key, value] of Object.entries(metadata)) {
+        const fieldId = allowedFields.get(key.toLowerCase());
+        if (!fieldId) return res.status(400).json({ message: `Invalid metadata field: ${key}` });
+        await conn.query(
+          `INSERT INTO \`${dbName}\`.document_metadata_values (document_id, field_id, value)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+          [id, fieldId, value],
+        );
+      }
+
+      await conn.commit();
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      await conn.rollback();
+      const message = error instanceof Error ? error.message : "Failed to update metadata";
+      return res.status(400).json({ message });
+    } finally {
+      conn.release();
+    }
+  },
+
+  async deleteUserDocument(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const id = asString(req.params.id).trim();
+      if (!id) return res.status(400).json({ message: "Document id is required" });
+      const [result] = await dbPool.query(
+        `UPDATE \`${dbName}\`.documents
+            SET status = 'deleted', updated_at = NOW()
+          WHERE id = ?
+            AND uploaded_by = ?
+            AND status <> 'deleted'
+          LIMIT 1`,
+        [id, req.user?.id],
+      );
+      if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) {
+        return res.status(404).json({ message: "Document not found or access denied" });
+      }
+      return res.status(204).send();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete document";
+      return res.status(400).json({ message });
+    }
+  },
+
   async userDashboard(req: Request, res: Response) {
     try {
       if (!req.user?.organizationId) {
@@ -1363,6 +1491,53 @@ export const protectedController = {
           ORDER BY d.created_at DESC
           LIMIT 30`,
         [like, like],
+      );
+
+      const results = (rows as Array<{
+        id: string;
+        name: string;
+        created_at: Date;
+        category_name: string;
+        uploader_name: string;
+      }>).map((r) => ({
+        id: r.id,
+        documentName: r.name,
+        snippet: `Document matching "${q}" in ${r.category_name}`,
+        category: r.category_name,
+        uploadDate: toIsoDate(new Date(r.created_at)),
+        uploadedBy: r.uploader_name,
+        keywords: [q],
+      }));
+
+      return res.status(200).json(results);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to search documents";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async searchUserOwnDocuments(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+
+      const q = asString(req.query.q).trim();
+      if (!q) return res.status(200).json([]);
+
+      const like = `%${q}%`;
+      const [rows] = await dbPool.query(
+        `SELECT d.id, d.name, d.created_at, d.uploaded_by AS uploaded_by_id,
+                COALESCE(c.name, 'Uncategorized') AS category_name,
+                COALESCE(u.name, 'Unknown') AS uploader_name
+           FROM \`${dbName}\`.documents d
+           LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
+           LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
+          WHERE d.uploaded_by = ?
+            AND d.status <> 'deleted'
+            AND (d.name LIKE ? OR c.name LIKE ?)
+          ORDER BY d.created_at DESC
+          LIMIT 30`,
+        [req.user?.id, like, like],
       );
 
       const results = (rows as Array<{
