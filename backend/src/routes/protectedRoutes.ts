@@ -46,6 +46,12 @@ protectedRoutes.get("/org-admin/documents/:id", requireAuth, requireRole("ORG_AD
 protectedRoutes.patch("/org-admin/documents/:id/archive", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminDocumentArchiveStatus);
 protectedRoutes.patch("/org-admin/documents/:id/metadata", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminDocumentMetadata);
 protectedRoutes.delete("/org-admin/documents/:id", requireAuth, requireRole("ORG_ADMIN"), protectedController.deleteOrgAdminDocument);
+protectedRoutes.get(
+  "/org-admin/activity-logs",
+  requireAuth,
+  requireRole("ORG_ADMIN"),
+  protectedController.listOrgActivityLogs,
+);
 
 protectedRoutes.get("/user", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.userData);
 protectedRoutes.get("/user/dashboard", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.userDashboard);

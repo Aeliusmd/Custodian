@@ -172,16 +172,18 @@ const toTenantTableDDL = () => [
       CONSTRAINT fk_dmv_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
       CONSTRAINT fk_dmv_field FOREIGN KEY (field_id) REFERENCES category_metadata_fields(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-  `CREATE TABLE IF NOT EXISTS org_activity_logs (
+  `CREATE TABLE IF NOT EXISTS activity_logs (
       id VARCHAR(36) NOT NULL,
-      performed_by VARCHAR(36) NOT NULL,
+      user_id VARCHAR(36) NOT NULL,
+      date_time VARCHAR(30) NOT NULL,
       action VARCHAR(120) NOT NULL,
       module VARCHAR(80) NOT NULL,
-      details TEXT NULL,
+      description TEXT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
-      KEY idx_oal_module (module),
-      KEY idx_oal_created_at (created_at)
+      KEY idx_al_user (user_id),
+      KEY idx_al_module (module),
+      KEY idx_al_created_at (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 

@@ -218,8 +218,22 @@ export const settingsApi = {
   },
 
   async getActivityLogs(): Promise<ActivityLog[]> {
-    return requestWithFallback<ActivityLog[]>('/org-admin/settings/activity', { method: 'GET' }, () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/protected/org-admin/activity-logs`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as { logs?: ActivityLog[] };
+      return data.logs ?? [];
+    } catch {
       return defaultActivityLogs;
-    });
+    }
   },
 };

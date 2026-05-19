@@ -10,6 +10,25 @@ import { enqueueDocumentOcr } from "../services/documentOcrQueue";
 import { absoluteFromStorageRoot, previewPageRelativePath, unlinkQuiet, writeUploadedDocumentFile } from "../services/documentStorageService";
 import { sanitizeStoredFileName } from "../utils/uploadFileName";
 import { notifyOrgAdmin } from "../services/notificationService";
+import { settingsModel } from "../models/settingsModel";
+
+const recordOrgActivity = async (
+  actorUserId: string,
+  organizationId: string,
+  entry: { action: string; module: string; description: string },
+) => {
+  try {
+    await settingsModel.addActivity(actorUserId, organizationId, {
+      id: crypto.randomUUID(),
+      date_time: new Date().toISOString(),
+      action: entry.action,
+      module: entry.module,
+      description: entry.description,
+    });
+  } catch (err) {
+    console.error("Failed to record org activity:", err);
+  }
+};
 
 const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
@@ -450,6 +469,20 @@ export const protectedController = {
     });
   },
 
+  async listOrgActivityLogs(req: Request, res: Response) {
+    try {
+      const organizationId = req.user?.organizationId;
+      if (!organizationId) {
+        return res.status(400).json({ message: "Organization context missing in session" });
+      }
+      const logs = await settingsModel.getAllOrgActivity(organizationId);
+      return res.status(200).json({ logs });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load activity logs";
+      return res.status(500).json({ message });
+    }
+  },
+
   userData(req: Request, res: Response) {
     return res.status(200).json({
       message: "User protected route access granted",
@@ -660,6 +693,13 @@ export const protectedController = {
       await conn.commit();
       const categories = await listCategoriesFromTenant(dbName);
       const created = categories.find((c) => c.id === categoryId);
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "Category Created",
+          module: "Categories",
+          description: `Created category "${name}".`,
+        });
+      }
       return res.status(201).json(created ?? null);
     } catch (error) {
       await conn.rollback();
@@ -729,6 +769,13 @@ export const protectedController = {
         order += 1;
       }
       await conn.commit();
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "Category Updated",
+          module: "Categories",
+          description: `Updated category "${name}".`,
+        });
+      }
       return res.status(200).json({ success: true });
     } catch (error) {
       await conn.rollback();
@@ -756,6 +803,12 @@ export const protectedController = {
         return res.status(400).json({ message: "Cannot delete category with existing documents" });
       }
 
+      const [catNameRows] = await dbPool.query(
+        `SELECT name FROM \`${dbName}\`.categories WHERE id = ? AND is_deleted = 0 LIMIT 1`,
+        [categoryId],
+      );
+      const categoryName = asString((catNameRows as Array<{ name: string }>)[0]?.name).trim() || categoryId;
+
       const [result] = await dbPool.query(
         `UPDATE \`${dbName}\`.categories
             SET is_deleted = 1,
@@ -767,6 +820,13 @@ export const protectedController = {
       );
       if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) {
         return res.status(404).json({ message: "Category not found" });
+      }
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "Category Deleted",
+          module: "Categories",
+          description: `Deleted category "${categoryName}".`,
+        });
       }
       return res.status(204).send();
     } catch (error) {
@@ -951,6 +1011,14 @@ export const protectedController = {
         categoryName: categoryId,
       });
 
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "Document Uploaded",
+          module: "Documents",
+          description: `Uploaded "${displayName}".`,
+        });
+      }
+
       return res.status(201).json({
         id: documentId,
         docCode,
@@ -1046,6 +1114,14 @@ export const protectedController = {
         userEmail: email,
       });
 
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "User Invited",
+          module: "Users",
+          description: `Invited ${name} (${email}).`,
+        });
+      }
+
       return res.status(201).json({ id: userId });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create user";
@@ -1094,6 +1170,14 @@ export const protectedController = {
         userEmail: email,
       });
 
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "User Updated",
+          module: "Users",
+          description: `Updated user ${name} (${email}).`,
+        });
+      }
+
       return res.status(200).json({ success: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update user";
@@ -1111,6 +1195,12 @@ export const protectedController = {
       const id = asString(req.params.id).trim();
       if (!id) return res.status(400).json({ message: "User id is required" });
       if (req.user?.id === id) return res.status(400).json({ message: "You cannot delete your own account" });
+      const [targetRows] = await dbPool.query(
+        `SELECT name, email FROM \`${dbName}\`.users WHERE id = ? LIMIT 1`,
+        [id],
+      );
+      const target = (targetRows as Array<{ name: string; email: string }>)[0];
+      const targetLabel = asString(target?.name).trim() || asString(target?.email).trim() || id;
       const [result] = await dbPool.query(
         `DELETE FROM \`${dbName}\`.users
           WHERE id = ?
@@ -1127,6 +1217,14 @@ export const protectedController = {
         actionType: "removed",
         userName: id,
       });
+
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "User Removed",
+          module: "Users",
+          description: `Removed user ${targetLabel}.`,
+        });
+      }
 
       return res.status(204).send();
     } catch (error) {
@@ -1153,6 +1251,13 @@ export const protectedController = {
       );
       if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) {
         return res.status(404).json({ message: "User not found" });
+      }
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "Password Reset",
+          module: "Users",
+          description: `Reset password for user ${id}.`,
+        });
       }
       return res.status(200).json({ success: true });
     } catch (error) {
@@ -1328,6 +1433,13 @@ export const protectedController = {
               safeStorageName: p.safeStorageName,
             });
           }
+          if (req.user?.id && req.user?.organizationId) {
+            void recordOrgActivity(req.user.id, req.user.organizationId, {
+              action: "Bulk Upload",
+              module: "Documents",
+              description: `Bulk uploaded ${created.length} document(s).`,
+            });
+          }
           return res.status(201).json({ uploaded: created.length, documents: created });
         } catch (error) {
           if (txStarted) await conn.rollback().catch(() => {});
@@ -1437,6 +1549,14 @@ export const protectedController = {
           actorName: req.user?.fullName,
           actorEmail: req.user?.email,
           fileName: `${successCount} document(s)`,
+        });
+      }
+
+      if (req.user?.id && req.user?.organizationId && successCount > 0) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "Bulk Upload",
+          module: "Documents",
+          description: `Bulk uploaded ${successCount} document(s).`,
         });
       }
 
@@ -1580,6 +1700,13 @@ export const protectedController = {
       if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) {
         return res.status(404).json({ message: "Document not found" });
       }
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: archived ? "Document Archived" : "Document Restored",
+          module: "Documents",
+          description: archived ? "Document archived." : "Document restored to active.",
+        });
+      }
       return res.status(200).json({ success: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update archive status";
@@ -1639,6 +1766,13 @@ export const protectedController = {
         [id],
       );
       await conn.commit();
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "Metadata Updated",
+          module: "Documents",
+          description: `Updated metadata for document ${id}.`,
+        });
+      }
       return res.status(200).json({ success: true });
     } catch (error) {
       await conn.rollback();
@@ -1655,6 +1789,11 @@ export const protectedController = {
       if (!dbName) return res.status(404).json({ message: "Organization not found" });
       const id = asString(req.params.id).trim();
       if (!id) return res.status(400).json({ message: "Document id is required" });
+      const [docNameRows] = await dbPool.query(
+        `SELECT name FROM \`${dbName}\`.documents WHERE id = ? AND status <> 'deleted' LIMIT 1`,
+        [id],
+      );
+      const docName = asString((docNameRows as Array<{ name: string }>)[0]?.name).trim() || id;
       const [result] = await dbPool.query(
         `UPDATE \`${dbName}\`.documents
             SET status = 'deleted', updated_at = NOW()
@@ -1665,6 +1804,13 @@ export const protectedController = {
       );
       if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) {
         return res.status(404).json({ message: "Document not found" });
+      }
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "Document Deleted",
+          module: "Documents",
+          description: `Deleted "${docName}".`,
+        });
       }
       return res.status(204).send();
     } catch (error) {
@@ -1720,6 +1866,11 @@ export const protectedController = {
       if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) {
         return res.status(404).json({ message: "Document not found or access denied" });
       }
+      void recordOrgActivity(req.user!.id, req.user!.organizationId, {
+        action: archived ? "Document Archived" : "Document Restored",
+        module: "Documents",
+        description: `Document ${id} ${archived ? "archived" : "restored"}.`,
+      });
       return res.status(200).json({ success: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update archive status";
@@ -1774,6 +1925,11 @@ export const protectedController = {
       }
 
       await conn.commit();
+      void recordOrgActivity(req.user!.id, req.user!.organizationId, {
+        action: "Metadata Updated",
+        module: "Documents",
+        description: `Metadata updated for document ${id}.`,
+      });
       return res.status(200).json({ success: true });
     } catch (error) {
       await conn.rollback();
@@ -1802,6 +1958,11 @@ export const protectedController = {
       if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) {
         return res.status(404).json({ message: "Document not found or access denied" });
       }
+      void recordOrgActivity(req.user!.id, req.user!.organizationId, {
+        action: "Document Deleted",
+        module: "Documents",
+        description: `Document ${id} deleted.`,
+      });
       return res.status(204).send();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to delete document";

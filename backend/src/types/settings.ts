@@ -31,3 +31,8 @@ export interface ActivityLog {
   module: string;
   description: string;
 }
+
+export interface OrgActivityLog extends ActivityLog {
+  performedBy: string;
+  performedById: string;
+}

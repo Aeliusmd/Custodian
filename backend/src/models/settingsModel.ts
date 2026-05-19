@@ -1,6 +1,6 @@
 import { dbPool } from "../config/db";
 import { env } from "../config/env";
-import type { ActivityLog, NotificationSetting, UserProfile } from "../types/settings";
+import type { ActivityLog, NotificationSetting, OrgActivityLog, UserProfile } from "../types/settings";
 
 /** Default notification rows seeded for every new user on first access. */
 const DEFAULT_NOTIFICATIONS: Array<Omit<NotificationSetting, ""> & { sort_order: number }> = [
@@ -232,6 +232,45 @@ export const settingsModel = {
   },
 
   /**
+   * Returns the 200 most recent activity log entries for all users in the organization.
+   */
+  async getAllOrgActivity(organizationId: string): Promise<OrgActivityLog[]> {
+    const tenantDb = await resolveTenantDbName(organizationId);
+
+    await dbPool.query(
+      `CREATE TABLE IF NOT EXISTS \`${tenantDb}\`.activity_logs (
+        id VARCHAR(36) NOT NULL,
+        user_id VARCHAR(36) NOT NULL,
+        date_time VARCHAR(30) NOT NULL,
+        action VARCHAR(120) NOT NULL,
+        module VARCHAR(80) NOT NULL,
+        description TEXT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_al_user (user_id),
+        KEY idx_al_module (module),
+        KEY idx_al_created_at (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    );
+
+    const [rows] = await dbPool.query(
+      `SELECT al.id,
+              al.date_time AS dateTime,
+              al.action,
+              al.module,
+              al.description,
+              al.user_id AS performedById,
+              COALESCE(NULLIF(TRIM(u.name), ''), u.email, '') AS performedBy
+         FROM \`${tenantDb}\`.activity_logs al
+         LEFT JOIN \`${tenantDb}\`.users u ON u.id = al.user_id
+        ORDER BY al.created_at DESC
+        LIMIT 200`,
+    );
+
+    return rows as OrgActivityLog[];
+  },
+
+  /**
    * Inserts a new activity log entry for a user.
    *
    * @param userId - The user's UUID.
@@ -244,6 +283,21 @@ export const settingsModel = {
     entry: { id: string; date_time: string; action: string; module: string; description: string },
   ): Promise<void> {
     const tenantDb = await resolveTenantDbName(organizationId);
+    await dbPool.query(
+      `CREATE TABLE IF NOT EXISTS \`${tenantDb}\`.activity_logs (
+        id VARCHAR(36) NOT NULL,
+        user_id VARCHAR(36) NOT NULL,
+        date_time VARCHAR(30) NOT NULL,
+        action VARCHAR(120) NOT NULL,
+        module VARCHAR(80) NOT NULL,
+        description TEXT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_al_user (user_id),
+        KEY idx_al_module (module),
+        KEY idx_al_created_at (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    );
     await dbPool.query(
       `INSERT INTO \`${tenantDb}\`.activity_logs
          (id, user_id, date_time, action, module, description)

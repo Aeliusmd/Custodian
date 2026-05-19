@@ -31,4 +31,6 @@ export interface ActivityLog {
   action: string;
   module: string;
   description: string;
+  performedBy?: string;
+  performedById?: string;
 }

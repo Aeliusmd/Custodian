@@ -29,6 +29,7 @@ export default function ActivityLogPage() {
   const [filterModule, setFilterModule] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterUser, setFilterUser] = useState('');
 
   useEffect(() => {
     const loadLogs = async () => {
@@ -41,10 +42,13 @@ export default function ActivityLogPage() {
     void loadLogs();
   }, []);
 
+  const performers = ['All', ...Array.from(new Set(logs.map((l) => l.performedBy).filter(Boolean) as string[]))];
+
   const filtered = logs.filter((l) => {
     const q = search.toLowerCase();
     if (q && !l.action.toLowerCase().includes(q) && !l.description.toLowerCase().includes(q)) return false;
     if (filterModule && l.module !== filterModule) return false;
+    if (filterUser && filterUser !== 'All' && l.performedBy !== filterUser) return false;
     const logDate = l.dateTime.split(' ')[0];
     if (filterDateFrom && logDate < filterDateFrom) return false;
     if (filterDateTo && logDate > filterDateTo) return false;
@@ -56,9 +60,10 @@ export default function ActivityLogPage() {
     setFilterModule('');
     setFilterDateFrom('');
     setFilterDateTo('');
+    setFilterUser('');
   };
 
-  const hasFilters = search || filterModule || filterDateFrom || filterDateTo;
+  const hasFilters = search || filterModule || filterDateFrom || filterDateTo || filterUser;
 
   if (isLoading) {
     return (
@@ -113,6 +118,19 @@ export default function ActivityLogPage() {
             <option value="Categories">Categories</option>
             <option value="Settings">Settings</option>
           </select>
+          <select
+            value={filterUser}
+            onChange={(e) => setFilterUser(e.target.value)}
+            title="Filter by user"
+            aria-label="Filter by user"
+            className="w-full sm:w-auto border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-600 outline-none bg-white cursor-pointer min-w-[140px]"
+          >
+            {performers.map((p) => (
+              <option key={p} value={p}>
+                {p === 'All' ? 'All Users' : p}
+              </option>
+            ))}
+          </select>
           <div className="flex items-center gap-1.5 w-full sm:w-auto">
             <input
               type="date"
@@ -140,19 +158,20 @@ export default function ActivityLogPage() {
       {/* Table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px]">
+          <table className="w-full min-w-[880px]">
             <thead>
               <tr className="border-b border-gray-100">
                 <th className="px-5 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Date & Time</th>
                 <th className="px-5 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Action</th>
                 <th className="px-5 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Module</th>
+                <th className="px-5 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Performed By</th>
                 <th className="px-5 py-3.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Description</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="text-center py-16 text-gray-400">
+                  <td colSpan={5} className="text-center py-16 text-gray-400">
                     <i className="ri-list-check-2 text-3xl block mb-2" />
                     <p className="text-sm">No activity logs found</p>
                   </td>
@@ -168,10 +187,25 @@ export default function ActivityLogPage() {
                       <span className="text-sm font-semibold text-[#1a2340] whitespace-nowrap">{log.action}</span>
                     </td>
                     <td className="px-5 py-4">
-                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap flex items-center gap-1 w-fit ${MODULE_COLORS[log.module]}`}>
-                        <i className={`${MODULE_ICONS[log.module]} text-xs`} />
+                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap flex items-center gap-1 w-fit ${MODULE_COLORS[log.module] ?? 'bg-gray-100 text-gray-600'}`}>
+                        <i className={`${MODULE_ICONS[log.module] ?? 'ri-record-circle-line'} text-xs`} />
                         {log.module}
                       </span>
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full flex items-center justify-center bg-[#0097B2]/10 flex-shrink-0">
+                          <span className="text-[9px] font-bold text-[#0097B2]">
+                            {(log.performedBy ?? '?')
+                              .split(' ')
+                              .map((n) => n[0])
+                              .join('')
+                              .slice(0, 2)
+                              .toUpperCase()}
+                          </span>
+                        </div>
+                        <span className="text-sm text-gray-600 whitespace-nowrap">{log.performedBy ?? 'Unknown'}</span>
+                      </div>
                     </td>
                     <td className="px-5 py-4">
                       <p className="text-sm text-gray-500 max-w-md">{log.description}</p>
