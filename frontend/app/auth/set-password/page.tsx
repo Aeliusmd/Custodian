@@ -1,14 +1,14 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 
 function SetPasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const token = searchParams.get("token") ?? "";
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+  const token = searchParams.get('token') ?? '';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 
   const [inviteInfo, setInviteInfo] = useState<{ email: string; organizationName: string } | null>(null);
   const [loadingInvite, setLoadingInvite] = useState(true);
@@ -16,19 +16,19 @@ function SetPasswordContent() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   const passwordError = useMemo(() => {
     if (!password) return null;
-    if (password.length < 8) return "Password must be at least 8 characters.";
+    if (password.length < 8) return 'Password must be at least 8 characters.';
     return null;
   }, [password]);
 
   useEffect(() => {
     const run = async () => {
       if (!token) {
-        setError("Invite token is missing.");
+        setError('Invite token is missing.');
         setLoadingInvite(false);
         return;
       }
@@ -36,15 +36,15 @@ function SetPasswordContent() {
       try {
         const response = await fetch(
           `${API_BASE_URL}/auth/invite/validate?token=${encodeURIComponent(token)}`,
-          { method: "GET", credentials: "include" },
+          { method: 'GET', credentials: 'include' },
         );
         const data = await response.json();
         if (!response.ok) {
-          throw new Error(data.message ?? "Invalid invite token.");
+          throw new Error(data.message ?? 'Invalid invite token.');
         }
         setInviteInfo({ email: data.email, organizationName: data.organizationName });
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Invite validation failed.");
+        setError(e instanceof Error ? e.message : 'Invite validation failed.');
       } finally {
         setLoadingInvite(false);
       }
@@ -58,34 +58,34 @@ function SetPasswordContent() {
     setSuccess(null);
 
     if (!token) {
-      setError("Invite token is missing.");
+      setError('Invite token is missing.');
       return;
     }
     if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+      setError('Password must be at least 8 characters.');
       return;
     }
     if (password !== confirmPassword) {
-      setError("Passwords do not match.");
+      setError('Passwords do not match.');
       return;
     }
 
     try {
       setSubmitting(true);
       const response = await fetch(`${API_BASE_URL}/auth/invite/accept`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, password }),
       });
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.message ?? "Failed to set password.");
+        throw new Error(data.message ?? 'Failed to set password.');
       }
-      setSuccess("Password set successfully. Redirecting to sign in...");
-      setTimeout(() => router.push("/auth/signin"), 1200);
+      setSuccess('Password set successfully. Redirecting to sign in...');
+      setTimeout(() => router.push('/auth/signin'), 1200);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to set password.");
+      setError(e instanceof Error ? e.message : 'Failed to set password.');
     } finally {
       setSubmitting(false);
     }
@@ -144,7 +144,7 @@ function SetPasswordContent() {
                 disabled={submitting}
                 className="w-full py-2.5 bg-brand-cyan text-white font-medium rounded-lg hover:bg-brand-cyan-dark transition-colors disabled:opacity-60"
               >
-                {submitting ? "Saving..." : "Set Password"}
+                {submitting ? 'Saving...' : 'Set Password'}
               </button>
             </form>
           </>
@@ -168,17 +168,19 @@ function SetPasswordContent() {
   );
 }
 
+function SetPasswordFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-brand-bg p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl border border-brand-border shadow-sm p-8">
+        <p className="text-sm text-brand-muted text-center">Loading…</p>
+      </div>
+    </div>
+  );
+}
+
 export default function SetPasswordPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center bg-brand-bg p-4">
-          <div className="w-full max-w-md bg-white rounded-2xl border border-brand-border shadow-sm p-8">
-            <p className="text-sm text-brand-muted text-center">Loading invite...</p>
-          </div>
-        </div>
-      }
-    >
+    <Suspense fallback={<SetPasswordFallback />}>
       <SetPasswordContent />
     </Suspense>
   );

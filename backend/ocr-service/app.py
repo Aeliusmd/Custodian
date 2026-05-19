@@ -58,10 +58,16 @@ _executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_OCR, thread_name_prefi
 _ocr_semaphore = asyncio.Semaphore(MAX_CONCURRENT_OCR)
 
 
+class OcrPage(BaseModel):
+    page: int
+    text: str
+
+
 class OcrResponse(BaseModel):
     """Node accepts `text` or `markdown`; we send both as the same plain string."""
     text: str
     markdown: str
+    pages: list[OcrPage]
 
 
 # ---------------------------------------------------------------------------
@@ -80,15 +86,16 @@ def repair_pdf(input_file: str, repaired_file: str) -> bool:
         return False
 
 
-def extract_text_from_pdf(pdf_path: str) -> str:
-    """Read searchable text from the OCR'd PDF."""
+def extract_text_from_pdf(pdf_path: str) -> tuple[str, list[OcrPage]]:
+    """Read searchable text from the OCR'd PDF, one entry per page (1-based)."""
     reader = PdfReader(pdf_path)
-    parts: list[str] = []
-    for page in reader.pages:
+    pages: list[OcrPage] = []
+    for i, page in enumerate(reader.pages, start=1):
         t = page.extract_text()
         if t and t.strip():
-            parts.append(t.strip())
-    return "\n\n".join(parts).strip()
+            pages.append(OcrPage(page=i, text=t.strip()))
+    joined = "\n\n".join(p.text for p in pages).strip()
+    return joined, pages
 
 
 def bytes_look_like_pdf(data: bytes) -> bool:
@@ -138,7 +145,7 @@ def ensure_input_pdf(input_path: Path) -> Path:
 # Core OCR work — runs inside the thread pool
 # ---------------------------------------------------------------------------
 
-def _run_ocr_sync(raw: bytes, filename: str) -> str:
+def _run_ocr_sync(raw: bytes, filename: str) -> tuple[str, list[OcrPage]]:
     """
     Blocking OCR pipeline executed in a worker thread.
     Returns extracted plain text.
@@ -162,16 +169,15 @@ def _run_ocr_sync(raw: bytes, filename: str) -> str:
                 deskew=OCR_DESKEW,
                 language=OCR_LANGUAGE,
                 skip_big=OCR_SKIP_BIG_MB,
-                output_type="pdf",
             )
 
-            text = extract_text_from_pdf(str(final_pdf))
+            text, pages = extract_text_from_pdf(str(final_pdf))
             if not text:
                 raise HTTPException(
                     status_code=422,
                     detail="OCR finished but no extractable text was found in the PDF",
                 )
-            return text
+            return text, pages
         finally:
             try:
                 in_path.unlink(missing_ok=True)
@@ -206,9 +212,9 @@ async def ocr_endpoint(file: UploadFile = File(...)) -> OcrResponse:
     # (the HTTP connection is held open) until a slot is free.
     async with _ocr_semaphore:
         loop = asyncio.get_running_loop()
-        text = await loop.run_in_executor(_executor, _run_ocr_sync, raw, filename)
+        text, pages = await loop.run_in_executor(_executor, _run_ocr_sync, raw, filename)
 
-    return OcrResponse(text=text, markdown=text)
+    return OcrResponse(text=text, markdown=text, pages=pages)
 
 
 # ---------------------------------------------------------------------------

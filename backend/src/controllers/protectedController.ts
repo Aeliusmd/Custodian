@@ -6,6 +6,15 @@ import { readFile } from "fs/promises";
 import path from "path";
 import { dbPool } from "../config/db";
 import { env } from "../config/env";
+import {
+  runGlobalSearch,
+  searchActiveReadyDocumentsForGlobalSearch,
+} from "../services/globalSearchService";
+import {
+  indexDocumentInSearch,
+  removeDocumentFromSearch,
+  reindexTenantSearchDocuments,
+} from "../services/documentSearchIndexService";
 import { enqueueDocumentOcr } from "../services/documentOcrQueue";
 import { absoluteFromStorageRoot, previewPageRelativePath, unlinkQuiet, writeUploadedDocumentFile } from "../services/documentStorageService";
 import { sanitizeStoredFileName } from "../utils/uploadFileName";
@@ -79,6 +88,19 @@ const getOrgDbNameFromSession = async (organizationId: string | undefined): Prom
   );
   const org = (orgRows as Array<{ db_name: string | null }>)[0];
   return org?.db_name ?? null;
+};
+
+const getOrganizationIdFromDbName = async (dbName: string): Promise<string | null> => {
+  const [orgRows] = await dbPool.query(
+    `SELECT id
+       FROM \`${env.mysqlDatabase}\`.organizations
+      WHERE db_name = ?
+        AND is_deleted = 0
+      LIMIT 1`,
+    [dbName],
+  );
+  const org = (orgRows as Array<{ id: string }>)[0];
+  return org?.id ?? null;
 };
 
 const ensureTenantCategoriesSoftDeleteColumn = async (dbName: string): Promise<void> => {
@@ -368,6 +390,274 @@ const listDocumentsFromTenant = async (dbName: string, archived: boolean, upload
       },
     ],
   }));
+};
+
+const ADVANCED_SEARCH_LIMIT = 200;
+
+type AdvancedSearchCriteria = {
+  docName?: string;
+  category?: string;
+  uploadedBy?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  keyword?: string;
+  metadata?: Record<string, string>;
+};
+
+const mapDocumentRowsWithMetadata = (
+  docs: Array<{
+    id: string;
+    name: string;
+    visibility: "Public" | "Private";
+    created_at: Date;
+    updated_at: Date;
+    file_path: string | null;
+    ocr_text_path: string | null;
+    ocr_status: string;
+    file_size_kb: number;
+    file_type: string;
+    preview_page_count: number;
+    category_name: string;
+    uploaded_by: string;
+  }>,
+  metaMap: Map<string, Record<string, string>>,
+) =>
+  docs.map((d) => ({
+    id: d.id,
+    name: d.name,
+    category: d.category_name,
+    uploadedBy: d.uploaded_by,
+    visibility: d.visibility === "Public" ? "Public" : "Private",
+    uploadDate: toIsoDate(new Date(d.created_at)),
+    lastUpdated: toIsoDate(new Date(d.updated_at)),
+    fileSize: d.file_size_kb >= 1024 ? `${(d.file_size_kb / 1024).toFixed(1)} MB` : `${d.file_size_kb} KB`,
+    fileType: String(d.file_type || "FILE").toUpperCase(),
+    filePath: d.file_path ?? "",
+    ocrTextPath: d.ocr_text_path ?? "",
+    ocrStatus: mapDbOcrStatusToApi(d.ocr_status),
+    previewPageCount: Math.max(0, Math.floor(Number(d.preview_page_count ?? 0))),
+    metadata: metaMap.get(d.id) ?? {},
+    versions: [
+      {
+        id: `${d.id}-v1`,
+        versionName: "v1.0",
+        date: toIsoDate(new Date(d.updated_at)),
+        uploadedBy: d.uploaded_by,
+        isCurrent: true,
+      },
+    ],
+  }));
+
+const advancedSearchDocumentsFromTenant = async (
+  dbName: string,
+  criteria: AdvancedSearchCriteria,
+  options?: { uploadedByUserId?: string; archived?: boolean },
+) => {
+  await ensureTenantCategoriesSoftDeleteColumn(dbName);
+  await ensureTenantDocumentsOcrSchema(dbName);
+
+  const status = options?.archived ? "archived" : "active";
+  const conditions: string[] = ["d.status = ?"];
+  const params: unknown[] = [status];
+
+  if (!options?.archived) {
+    conditions.push("d.ocr_status = 'ready'");
+  }
+
+  if (options?.uploadedByUserId) {
+    conditions.push("d.uploaded_by = ?");
+    params.push(options.uploadedByUserId);
+  }
+
+  const docName = asString(criteria.docName).trim();
+  if (docName) {
+    conditions.push("LOWER(d.name) LIKE LOWER(?)");
+    params.push(`%${docName}%`);
+  }
+
+  const category = asString(criteria.category).trim();
+  if (category) {
+    conditions.push("c.name = ?");
+    params.push(category);
+  }
+
+  const uploadedBy = asString(criteria.uploadedBy).trim();
+  if (uploadedBy) {
+    conditions.push("u.name = ?");
+    params.push(uploadedBy);
+  }
+
+  const dateFrom = asString(criteria.dateFrom).trim();
+  if (dateFrom) {
+    conditions.push("DATE(d.created_at) >= ?");
+    params.push(dateFrom);
+  }
+
+  const dateTo = asString(criteria.dateTo).trim();
+  if (dateTo) {
+    conditions.push("DATE(d.created_at) <= ?");
+    params.push(dateTo);
+  }
+
+  const keyword = asString(criteria.keyword).trim();
+  if (keyword) {
+    const kwLike = `%${keyword}%`;
+    conditions.push(
+      `(
+        LOWER(d.name) LIKE LOWER(?)
+        OR LOWER(COALESCE(c.name, '')) LIKE LOWER(?)
+        OR EXISTS (
+          SELECT 1
+            FROM \`${dbName}\`.document_metadata_values dmv_kw
+           WHERE dmv_kw.document_id = d.id
+             AND LOWER(dmv_kw.value) LIKE LOWER(?)
+        )
+      )`,
+    );
+    params.push(kwLike, kwLike, kwLike);
+  }
+
+  const metadata = criteria.metadata ?? {};
+  for (const [fieldKey, rawValue] of Object.entries(metadata)) {
+    const key = asString(fieldKey).trim();
+    const value = asString(rawValue).trim();
+    if (!key || !value) continue;
+    const valueLike = `%${value}%`;
+    conditions.push(
+      `(
+        EXISTS (
+          SELECT 1
+            FROM \`${dbName}\`.document_metadata_values dmv_f
+            JOIN \`${dbName}\`.category_metadata_fields cmf_f
+              ON cmf_f.id = dmv_f.field_id
+             AND cmf_f.category_id = d.category_id
+           WHERE dmv_f.document_id = d.id
+             AND (cmf_f.id = ? OR LOWER(cmf_f.field_name) = LOWER(?))
+             AND LOWER(dmv_f.value) LIKE LOWER(?)
+        )
+        OR EXISTS (
+          SELECT 1
+            FROM \`${dbName}\`.document_metadata_values dmv_any
+           WHERE dmv_any.document_id = d.id
+             AND LOWER(dmv_any.value) LIKE LOWER(?)
+        )
+      )`,
+    );
+    params.push(key, key, valueLike, valueLike);
+  }
+
+  const [idRows] = await dbPool.query(
+    `SELECT d.id
+       FROM \`${dbName}\`.documents d
+       LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
+       LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY d.created_at DESC
+      LIMIT ${ADVANCED_SEARCH_LIMIT}`,
+    params,
+  );
+
+  const ids = (idRows as Array<{ id: string }>).map((r) => r.id);
+  if (ids.length === 0) return [];
+
+  const placeholders = ids.map(() => "?").join(", ");
+  const [rows] = await dbPool.query(
+    `SELECT d.id, d.name, d.visibility, d.created_at, d.updated_at, d.file_path, d.ocr_text_path, d.ocr_status, d.file_size_kb, d.file_type, d.preview_page_count,
+            COALESCE(c.name, 'Uncategorized') AS category_name,
+            COALESCE(u.name, 'Unknown') AS uploaded_by
+       FROM \`${dbName}\`.documents d
+       LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
+       LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
+      WHERE d.id IN (${placeholders})
+      ORDER BY d.created_at DESC`,
+    ids,
+  );
+
+  const docs = rows as Array<{
+    id: string;
+    name: string;
+    visibility: "Public" | "Private";
+    created_at: Date;
+    updated_at: Date;
+    file_path: string | null;
+    ocr_text_path: string | null;
+    ocr_status: string;
+    file_size_kb: number;
+    file_type: string;
+    preview_page_count: number;
+    category_name: string;
+    uploaded_by: string;
+  }>;
+
+  const [metaRows] = await dbPool.query(
+    `SELECT dmv.document_id, cmf.field_name, dmv.value
+       FROM \`${dbName}\`.document_metadata_values dmv
+       JOIN \`${dbName}\`.category_metadata_fields cmf ON cmf.id = dmv.field_id
+      WHERE dmv.document_id IN (${placeholders})`,
+    ids,
+  );
+  const metaMap = new Map<string, Record<string, string>>();
+  for (const row of metaRows as Array<{ document_id: string; field_name: string; value: string }>) {
+    const entry = metaMap.get(row.document_id) ?? {};
+    entry[row.field_name] = row.value ?? "";
+    metaMap.set(row.document_id, entry);
+  }
+
+  return mapDocumentRowsWithMetadata(docs, metaMap);
+};
+
+const parseAdvancedSearchBody = (body: unknown) => {
+  const raw = (body ?? {}) as {
+    docName?: string;
+    category?: string;
+    uploadedBy?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    keyword?: string;
+    metadata?: Record<string, string>;
+    archived?: boolean;
+  };
+  const metadata: Record<string, string> = {};
+  if (raw.metadata && typeof raw.metadata === "object") {
+    for (const [key, val] of Object.entries(raw.metadata)) {
+      const fieldKey = asString(key).trim();
+      const value = asString(val).trim();
+      if (fieldKey && value) metadata[fieldKey] = value;
+    }
+  }
+  return {
+    criteria: {
+      docName: asString(raw.docName).trim(),
+      category: asString(raw.category).trim(),
+      uploadedBy: asString(raw.uploadedBy).trim(),
+      dateFrom: asString(raw.dateFrom).trim(),
+      dateTo: asString(raw.dateTo).trim(),
+      keyword: asString(raw.keyword).trim(),
+      metadata,
+    },
+    archived: raw.archived === true,
+  };
+};
+
+const runAdvancedSearch = async (
+  req: Request,
+  res: Response,
+  options?: { uploadedByUserId?: string },
+) => {
+  try {
+    const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+    if (!dbName) return res.status(404).json({ message: "Organization not found" });
+
+    const { criteria, archived } = parseAdvancedSearchBody(req.body);
+    const searchOptions: { uploadedByUserId?: string; archived?: boolean } = { archived };
+    if (options?.uploadedByUserId) searchOptions.uploadedByUserId = options.uploadedByUserId;
+    const results = await advancedSearchDocumentsFromTenant(dbName, criteria, searchOptions);
+
+    return res.status(200).json({ results, total: results.length });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to search documents";
+    return res.status(500).json({ message });
+  }
 };
 
 const getDocumentFromTenant = async (dbName: string, id: string, uploadedBy?: string) => {
@@ -998,6 +1288,7 @@ export const protectedController = {
       if (mainAbsoluteForOcr) {
         enqueueDocumentOcr({
           dbName,
+          organizationId: req.user?.organizationId ?? "",
           documentId,
           absoluteMainPath: mainAbsoluteForOcr,
           safeStorageName,
@@ -1428,6 +1719,7 @@ export const protectedController = {
           for (const p of prepared) {
             enqueueDocumentOcr({
               dbName,
+              organizationId: req.user?.organizationId ?? "",
               documentId: p.documentId,
               absoluteMainPath: p.absoluteMainPath,
               safeStorageName: p.safeStorageName,
@@ -1700,12 +1992,18 @@ export const protectedController = {
       if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) {
         return res.status(404).json({ message: "Document not found" });
       }
-      if (req.user?.id && req.user?.organizationId) {
-        void recordOrgActivity(req.user.id, req.user.organizationId, {
+      const organizationId = req.user?.organizationId;
+      if (req.user?.id && organizationId) {
+        void recordOrgActivity(req.user.id, organizationId, {
           action: archived ? "Document Archived" : "Document Restored",
           module: "Documents",
           description: archived ? "Document archived." : "Document restored to active.",
         });
+        if (archived) {
+          void removeDocumentFromSearch(organizationId, id);
+        } else {
+          void indexDocumentInSearch({ organizationId, dbName, documentId: id });
+        }
       }
       return res.status(200).json({ success: true });
     } catch (error) {
@@ -1812,6 +2110,8 @@ export const protectedController = {
           description: `Deleted "${docName}".`,
         });
       }
+      const organizationId = req.user?.organizationId ?? (await getOrganizationIdFromDbName(dbName));
+      if (organizationId) void removeDocumentFromSearch(organizationId, id);
       return res.status(204).send();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to delete document";
@@ -1847,6 +2147,49 @@ export const protectedController = {
     }
   },
 
+  async getUserDocumentFile(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const id = asString(req.params.id).trim();
+      const userId = req.user?.id;
+      if (!id) return res.status(400).json({ message: "Document id is required" });
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const [rows] = await dbPool.query(
+        `SELECT d.name, d.file_path, d.file_type
+           FROM \`${dbName}\`.documents d
+          WHERE d.id = ?
+            AND d.uploaded_by = ?
+            AND d.status <> 'deleted'
+          LIMIT 1`,
+        [id, userId],
+      );
+      const row = (rows as Array<{ name: string; file_path: string | null; file_type: string }>)[0];
+      const relative = asString(row?.file_path).trim();
+      if (!row || !relative) return res.status(404).json({ message: "File not found" });
+
+      const absolute = absoluteFromStorageRoot(env.storageRoot, relative);
+      if (!isPathWithinStorageRoot(env.storageRoot, absolute)) {
+        return res.status(400).json({ message: "Invalid path" });
+      }
+      if (!existsSync(absolute)) return res.status(404).json({ message: "File missing on disk" });
+
+      const mime = mimeTypeForDocumentFile(row.name, absolute);
+      res.setHeader("Content-Type", mime);
+      const safeName = row.name.replace(/[\r\n"]/g, "_").trim() || "document";
+      const asciiName = safeName.replace(/[^\x20-\x7E]/g, "_");
+      res.setHeader("Content-Disposition", `attachment; filename="${asciiName}"`);
+      res.sendFile(absolute, (err) => {
+        if (err && !res.headersSent) {
+          res.status(500).json({ message: "Failed to send file" });
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to download file";
+      return res.status(500).json({ message });
+    }
+  },
+
   async updateUserDocumentArchiveStatus(req: Request, res: Response) {
     try {
       const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
@@ -1871,6 +2214,14 @@ export const protectedController = {
         module: "Documents",
         description: `Document ${id} ${archived ? "archived" : "restored"}.`,
       });
+      const organizationId = req.user?.organizationId;
+      if (organizationId) {
+        if (archived) {
+          void removeDocumentFromSearch(organizationId, id);
+        } else {
+          void indexDocumentInSearch({ organizationId, dbName, documentId: id });
+        }
+      }
       return res.status(200).json({ success: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update archive status";
@@ -1963,6 +2314,8 @@ export const protectedController = {
         module: "Documents",
         description: `Document ${id} deleted.`,
       });
+      const organizationId = req.user?.organizationId;
+      if (organizationId) void removeDocumentFromSearch(organizationId, id);
       return res.status(204).send();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to delete document";
@@ -2129,93 +2482,69 @@ export const protectedController = {
     }
   },
 
-  async searchUserDocuments(req: Request, res: Response) {
+  async advancedSearchOrgAdminDocuments(req: Request, res: Response) {
+    return runAdvancedSearch(req, res);
+  },
+
+  async advancedSearchUserDocuments(req: Request, res: Response) {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    return runAdvancedSearch(req, res, { uploadedByUserId: userId });
+  },
+
+  async searchOrgAdminDocuments(req: Request, res: Response) {
     try {
-      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
-      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const organizationId = req.user?.organizationId;
+      const dbName = await getOrgDbNameFromSession(organizationId);
+      if (!dbName || !organizationId) return res.status(404).json({ message: "Organization not found" });
 
       const q = asString(req.query.q).trim();
-      if (!q) return res.status(200).json([]);
+      if (!q) return res.status(200).json({ query: q, results: [], total: 0 });
 
-      const like = `%${q}%`;
-      const [rows] = await dbPool.query(
-        `SELECT d.id, d.name, d.created_at, d.uploaded_by AS uploaded_by_id,
-                COALESCE(c.name, 'Uncategorized') AS category_name,
-                COALESCE(u.name, 'Unknown') AS uploader_name
-           FROM \`${dbName}\`.documents d
-           LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
-           LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
-          WHERE d.status <> 'deleted'
-            AND (d.name LIKE ? OR c.name LIKE ?)
-          ORDER BY d.created_at DESC
-          LIMIT 30`,
-        [like, like],
-      );
-
-      const results = (rows as Array<{
-        id: string;
-        name: string;
-        created_at: Date;
-        category_name: string;
-        uploader_name: string;
-      }>).map((r) => ({
-        id: r.id,
-        documentName: r.name,
-        snippet: `Document matching "${q}" in ${r.category_name}`,
-        category: r.category_name,
-        uploadDate: toIsoDate(new Date(r.created_at)),
-        uploadedBy: r.uploader_name,
-        keywords: [q],
-      }));
-
-      return res.status(200).json(results);
+      const metadataResults = await searchActiveReadyDocumentsForGlobalSearch(dbName, q);
+      const results = await runGlobalSearch(metadataResults, organizationId, dbName, q);
+      return res.status(200).json({ query: q, results, total: results.length });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to search documents";
       return res.status(500).json({ message });
     }
   },
 
+  async reindexOrgAdminSearch(req: Request, res: Response) {
+    try {
+      const organizationId = req.user?.organizationId;
+      const dbName = await getOrgDbNameFromSession(organizationId);
+      if (!dbName || !organizationId) return res.status(404).json({ message: "Organization not found" });
+
+      const result = await reindexTenantSearchDocuments({ organizationId, dbName });
+      return res.status(200).json({
+        message: "Search index rebuild started",
+        indexed: result.indexed,
+        skipped: result.skipped,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to reindex documents";
+      return res.status(500).json({ message });
+    }
+  },
+
   async searchUserOwnDocuments(req: Request, res: Response) {
     try {
-      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
-      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const organizationId = req.user?.organizationId;
+      const dbName = await getOrgDbNameFromSession(organizationId);
+      if (!dbName || !organizationId) return res.status(404).json({ message: "Organization not found" });
 
       const q = asString(req.query.q).trim();
-      if (!q) return res.status(200).json([]);
+      if (!q) return res.status(200).json({ query: q, results: [], total: 0 });
 
-      const like = `%${q}%`;
-      const [rows] = await dbPool.query(
-        `SELECT d.id, d.name, d.created_at, d.uploaded_by AS uploaded_by_id,
-                COALESCE(c.name, 'Uncategorized') AS category_name,
-                COALESCE(u.name, 'Unknown') AS uploader_name
-           FROM \`${dbName}\`.documents d
-           LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
-           LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
-          WHERE d.uploaded_by = ?
-            AND d.status <> 'deleted'
-            AND (d.name LIKE ? OR c.name LIKE ?)
-          ORDER BY d.created_at DESC
-          LIMIT 30`,
-        [req.user?.id, like, like],
-      );
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
-      const results = (rows as Array<{
-        id: string;
-        name: string;
-        created_at: Date;
-        category_name: string;
-        uploader_name: string;
-      }>).map((r) => ({
-        id: r.id,
-        documentName: r.name,
-        snippet: `Document matching "${q}" in ${r.category_name}`,
-        category: r.category_name,
-        uploadDate: toIsoDate(new Date(r.created_at)),
-        uploadedBy: r.uploader_name,
-        keywords: [q],
-      }));
-
-      return res.status(200).json(results);
+      const metadataResults = await searchActiveReadyDocumentsForGlobalSearch(dbName, q, { uploadedBy: userId });
+      const results = await runGlobalSearch(metadataResults, organizationId, dbName, q, {
+        uploadedByUserId: userId,
+      });
+      return res.status(200).json({ query: q, results, total: results.length });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to search documents";
       return res.status(500).json({ message });
