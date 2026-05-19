@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { DocumentRecord, DocumentVersion } from '@/mocks/documents';
+import { loadPdfJs } from '@/app/lib/pdfjsClient';
 import {
   fileExtension,
   inferClientPreviewMode,
@@ -40,6 +41,8 @@ interface Props {
   onNotify?: (message: string, type: 'success' | 'error') => void;
   /** When `doc.previewPageCount > 0`, fetches each page PNG (credentials). */
   previewImageUrlForPage?: (pageOneBased: number) => string;
+  /** Open viewer on this page (1-based). */
+  initialPage?: number;
 }
 
 export default function DocumentViewerModal({
@@ -50,8 +53,10 @@ export default function DocumentViewerModal({
   fileDownloadUrl,
   onNotify,
   previewImageUrlForPage,
+  initialPage,
 }: Props) {
-  const [currentPage, setCurrentPage] = useState(0);
+  const initialPageIndex = Math.max(0, Math.floor((initialPage ?? 1) - 1));
+  const [currentPage, setCurrentPage] = useState(initialPageIndex);
   const [zoom, setZoom] = useState(100);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [downloadBusy, setDownloadBusy] = useState(false);
@@ -60,21 +65,25 @@ export default function DocumentViewerModal({
   const [pageImageError, setPageImageError] = useState(false);
 
   const previewPageCount = Math.max(0, Math.floor(doc.previewPageCount ?? 0));
-  const usePageImages = previewPageCount > 0 && typeof previewImageUrlForPage === 'function';
+  const inferredFileMode: ClientPreviewMode = fileDownloadUrl
+    ? inferClientPreviewMode(doc.name, doc.fileType)
+    : 'no-file-url';
+  /** Prefer in-browser PDF.js for PDFs even when legacy preview_page_count > 0 but PNGs are missing. */
+  const usePageImages =
+    previewPageCount > 0 &&
+    typeof previewImageUrlForPage === 'function' &&
+    inferredFileMode !== 'pdf-canvas';
 
   const previewBlobUrlRef = useRef<string | null>(null);
 
-  const clientMode: ClientPreviewMode | null = usePageImages
-    ? null
-    : fileDownloadUrl
-      ? inferClientPreviewMode(doc.name, doc.fileType)
-      : 'no-file-url';
+  const clientMode: ClientPreviewMode | null = usePageImages ? null : inferredFileMode;
 
   const pdfRef = useRef<PDFDocumentProxy | null>(null);
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const pdfRenderTaskRef = useRef<{ cancel?: () => void } | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfError, setPdfError] = useState(false);
+  const [pdfErrorDetail, setPdfErrorDetail] = useState('');
   const [pdfNumPages, setPdfNumPages] = useState(0);
 
   const mediaBlobUrlRef = useRef<string | null>(null);
@@ -112,10 +121,10 @@ export default function DocumentViewerModal({
 
   useEffect(() => {
     queueMicrotask(() => {
-      setCurrentPage(0);
+      setCurrentPage(Math.max(0, Math.floor((initialPage ?? 1) - 1)));
       setZoom(100);
     });
-  }, [doc.id]);
+  }, [doc.id, initialPage]);
 
   useEffect(() => {
     if (!usePageImages || !previewImageUrlForPage) {
@@ -173,6 +182,7 @@ export default function DocumentViewerModal({
         setPdfNumPages(0);
         setPdfLoading(false);
         setPdfError(false);
+        setPdfErrorDetail('');
       });
       return undefined;
     }
@@ -181,6 +191,7 @@ export default function DocumentViewerModal({
     queueMicrotask(() => {
       setPdfLoading(true);
       setPdfError(false);
+      setPdfErrorDetail('');
       setPdfNumPages(0);
     });
 
@@ -656,10 +667,11 @@ export default function DocumentViewerModal({
                 </p>
               )}
               {pdfError && !pdfLoading && (
-                <p className="max-w-md text-center text-red-300 text-sm">
-                  Could not load this PDF in the browser. Try downloading the file, or wait if the server is still
-                  generating page previews.
-                </p>
+                <div className="max-w-md text-center text-red-300 text-sm space-y-2">
+                  <p>Could not load this PDF in the browser.</p>
+                  {pdfErrorDetail && <p className="text-red-200/90 text-xs">{pdfErrorDetail}</p>}
+                  <p className="text-white/50 text-xs">Use Download to open the file locally.</p>
+                </div>
               )}
               {!pdfError && !pdfLoading && pdfNumPages > 0 && (
                 <div className="max-w-full overflow-auto rounded-lg bg-neutral-900/40 p-2 shadow-2xl ring-1 ring-white/10">

@@ -1,7 +1,10 @@
 import { logger } from "../config/logger";
 
+export type OcrServicePage = { page: number; text: string };
+
 export type OcrServiceResponse = {
   text: string;
+  pages: OcrServicePage[];
 };
 
 /**
@@ -37,9 +40,20 @@ export const callOcrService = async (
 
     const raw = await res.text();
     let text = "";
+    let pages: OcrServicePage[] = [];
     try {
-      const json = JSON.parse(raw) as { text?: string; markdown?: string };
+      const json = JSON.parse(raw) as {
+        text?: string;
+        markdown?: string;
+        pages?: Array<{ page?: number; text?: string }>;
+      };
       text = (json.text ?? json.markdown ?? "").trim();
+      pages = (json.pages ?? [])
+        .map((p) => ({
+          page: Math.max(1, Math.floor(Number(p.page ?? 1))),
+          text: String(p.text ?? "").trim(),
+        }))
+        .filter((p) => p.text);
     } catch {
       text = raw.trim();
     }
@@ -48,7 +62,11 @@ export const callOcrService = async (
       throw new Error("OCR service returned empty body");
     }
 
-    return { text };
+    if (pages.length === 0) {
+      pages = [{ page: 1, text }];
+    }
+
+    return { text, pages };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     logger.warn("ocr_service_call_failed", { message: msg, serviceUrl });

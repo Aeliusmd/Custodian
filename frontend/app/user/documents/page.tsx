@@ -451,7 +451,10 @@ export default function AllDocumentsPage() {
 
       {viewerDoc && (
         <DocumentViewerModal
+          key={viewerDoc.id}
           doc={viewerDoc}
+          fileDownloadUrl={`${API_BASE_URL}/protected/user/documents/${encodeURIComponent(viewerDoc.id)}/file`}
+          onNotify={(message, type) => showToast(message, type)}
           onClose={() => setViewerDoc(null)}
           onOpenVersionHistory={() => { setViewerDoc(null); openModal('version', viewerDoc); }}
         />

@@ -127,11 +127,11 @@ export default function OrgAdminDashboard() {
               <div className={styles.statsIconBg} style={{ backgroundColor: `${card.color}18` }}>
                 <i className={`${card.icon} ${styles.statsIcon}`} style={{ color: card.color }} />
               </div>
-              {!card.isStorage && (
+              {!('isStorage' in card) && (
                 <span className="text-xs font-medium text-[#16a34a] bg-[#16a34a]/10 px-2 py-0.5 rounded-full whitespace-nowrap">{card.change}</span>
               )}
             </div>
-            {card.isStorage ? (
+            {'isStorage' in card ? (
               <>
                 <div className="text-2xl font-bold text-[#1a2340] mb-1">{card.value}</div>
                 <div className="text-xs text-gray-400 mb-2">{card.used} GB of {card.total} GB used</div>

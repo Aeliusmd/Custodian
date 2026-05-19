@@ -29,6 +29,19 @@ protectedRoutes.post(
   memoryUploadBulk,
   protectedController.createOrgAdminBulkDocuments,
 );
+protectedRoutes.get("/org-admin/search", requireAuth, requireRole("ORG_ADMIN"), protectedController.searchOrgAdminDocuments);
+protectedRoutes.post(
+  "/org-admin/search/reindex",
+  requireAuth,
+  requireRole("ORG_ADMIN"),
+  protectedController.reindexOrgAdminSearch,
+);
+protectedRoutes.post(
+  "/org-admin/advanced-search",
+  requireAuth,
+  requireRole("ORG_ADMIN"),
+  protectedController.advancedSearchOrgAdminDocuments,
+);
 protectedRoutes.get("/org-admin/documents", requireAuth, requireRole("ORG_ADMIN"), protectedController.listOrgAdminDocuments);
 protectedRoutes.get(
   "/org-admin/documents/:id/preview/:pageNum",
@@ -51,10 +64,22 @@ protectedRoutes.get("/user", requireAuth, requireRole("USER", "ORG_ADMIN"), prot
 protectedRoutes.get("/user/dashboard", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.userDashboard);
 protectedRoutes.get("/user/categories", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.listOrgAdminCategories);
 protectedRoutes.get("/user/search", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.searchUserOwnDocuments);
+protectedRoutes.post(
+  "/user/advanced-search",
+  requireAuth,
+  requireRole("USER", "ORG_ADMIN"),
+  protectedController.advancedSearchUserDocuments,
+);
 protectedRoutes.post("/user/documents/single", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.createOrgAdminSingleDocument);
 protectedRoutes.post("/user/documents/bulk", requireAuth, requireRole("USER", "ORG_ADMIN"), memoryUploadBulk, protectedController.createOrgAdminBulkDocuments);
 protectedRoutes.get("/user/documents", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.listUserDocuments);
 protectedRoutes.get("/user/documents/:id", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.getUserDocument);
+protectedRoutes.get(
+  "/user/documents/:id/file",
+  requireAuth,
+  requireRole("USER", "ORG_ADMIN"),
+  protectedController.getUserDocumentFile,
+);
 protectedRoutes.patch("/user/documents/:id/archive", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.updateUserDocumentArchiveStatus);
 protectedRoutes.patch("/user/documents/:id/metadata", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.updateUserDocumentMetadata);
 protectedRoutes.delete("/user/documents/:id", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.deleteUserDocument);

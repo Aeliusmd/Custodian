@@ -8,16 +8,33 @@ import {
   extractLocalDocumentText,
   sniffExtension,
 } from "./documentTextExtractionService";
-import { clearDocumentPreviewDir, writeOcrOutputFile } from "./documentStorageService";
+import { indexDocumentInSearch } from "./documentSearchIndexService";
+import {
+  clearDocumentPreviewDir,
+  splitFlatOcrTextIntoPages,
+  writeOcrOutputFile,
+  writeOcrPagesFile,
+  type OcrPageText,
+} from "./documentStorageService";
 
 export type DocumentOcrJob = {
   dbName: string;
+  organizationId: string;
   documentId: string;
   absoluteMainPath: string;
   safeStorageName: string;
 };
 
 let jobChain: Promise<void> = Promise.resolve();
+
+const persistOcrPages = async (documentId: string, pages: OcrPageText[], flatText: string): Promise<void> => {
+  const normalized =
+    pages.length > 0 ? pages : splitFlatOcrTextIntoPages(flatText);
+  await writeOcrOutputFile(env.storageRoot, documentId, flatText);
+  if (normalized.length > 0) {
+    await writeOcrPagesFile(env.storageRoot, documentId, normalized);
+  }
+};
 
 const runDocumentOcrJob = async (job: DocumentOcrJob): Promise<void> => {
   logger.debug("ocr_job_start", { documentId: job.documentId, dbName: job.dbName });
@@ -27,6 +44,7 @@ const runDocumentOcrJob = async (job: DocumentOcrJob): Promise<void> => {
     await clearDocumentPreviewDir(env.storageRoot, job.documentId);
 
     let ocrTextBody = "";
+    let ocrPages: OcrPageText[] = [];
 
     if (extensionUsesExternalOcrService(ext)) {
       const url = env.ocrServiceUrl?.trim();
@@ -36,6 +54,7 @@ const runDocumentOcrJob = async (job: DocumentOcrJob): Promise<void> => {
         const native = (await extractLocalDocumentText(buf, job.safeStorageName)).trim();
         if (native.length >= minNative) {
           ocrTextBody = native;
+          ocrPages = splitFlatOcrTextIntoPages(native);
           logger.info("ocr_job_pdf_skipped_external", {
             documentId: job.documentId,
             nativeChars: native.length,
@@ -52,8 +71,9 @@ const runDocumentOcrJob = async (job: DocumentOcrJob): Promise<void> => {
           );
           return;
         } else {
-          const { text } = await callOcrService(url, buf, job.safeStorageName, env.ocrServiceTimeoutMs);
+          const { text, pages } = await callOcrService(url, buf, job.safeStorageName, env.ocrServiceTimeoutMs);
           ocrTextBody = text.trim();
+          ocrPages = pages.map((p) => ({ page: p.page, text: p.text }));
         }
       } else if (!url) {
         logger.warn("ocr_job_no_service_url", { documentId: job.documentId, ext });
@@ -66,23 +86,33 @@ const runDocumentOcrJob = async (job: DocumentOcrJob): Promise<void> => {
         );
         return;
       } else {
-        const { text } = await callOcrService(url, buf, job.safeStorageName, env.ocrServiceTimeoutMs);
+        const { text, pages } = await callOcrService(url, buf, job.safeStorageName, env.ocrServiceTimeoutMs);
         ocrTextBody = text.trim();
+        ocrPages = pages.map((p) => ({ page: p.page, text: p.text }));
       }
     } else {
       ocrTextBody = (await extractLocalDocumentText(buf, job.safeStorageName)).trim();
+      ocrPages = splitFlatOcrTextIntoPages(ocrTextBody);
     }
 
     if (ocrTextBody) {
-      const ocr = await writeOcrOutputFile(env.storageRoot, job.documentId, ocrTextBody);
+      await persistOcrPages(job.documentId, ocrPages, ocrTextBody);
+      const pageCount = ocrPages.length > 0 ? ocrPages.length : splitFlatOcrTextIntoPages(ocrTextBody).length;
       await dbPool.query(
         `UPDATE \`${job.dbName}\`.documents
-            SET ocr_text_path = ?, ocr_status = 'ready', preview_page_count = 0, updated_at = NOW()
+            SET ocr_text_path = ?, ocr_status = 'ready', preview_page_count = ?, updated_at = NOW()
           WHERE id = ?
           LIMIT 1`,
-        [ocr.relativePath, job.documentId],
+        [`uploads/ocr/${job.documentId}.txt`, Math.max(0, pageCount), job.documentId],
       );
-      logger.info("ocr_job_ready", { documentId: job.documentId, fileName: job.safeStorageName, ext });
+      logger.info("ocr_job_ready", { documentId: job.documentId, fileName: job.safeStorageName, ext, pageCount });
+
+      void indexDocumentInSearch({
+        organizationId: job.organizationId,
+        dbName: job.dbName,
+        documentId: job.documentId,
+        ocrText: ocrTextBody,
+      });
     } else {
       await dbPool.query(
         `UPDATE \`${job.dbName}\`.documents

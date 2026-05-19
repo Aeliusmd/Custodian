@@ -39,6 +39,9 @@ export const env = {
   logLevel: (process.env.LOG_LEVEL?.trim().toLowerCase() as "debug" | "info" | "warn" | "error") || "info",
   logHttp: process.env.LOG_HTTP !== "0" && process.env.LOG_HTTP !== "false",
   logToFile: process.env.LOG_TO_FILE !== "0" && process.env.LOG_TO_FILE !== "false",
+  meilisearchHost: process.env.MEILISEARCH_HOST?.trim() || "http://127.0.0.1:7700",
+  meilisearchApiKey: process.env.MEILISEARCH_API_KEY?.trim() || "",
+  meilisearchIndexUid: process.env.MEILISEARCH_INDEX_UID?.trim() || "custodian_documents",
 };
 
 export const isProduction = env.nodeEnv === "production";
