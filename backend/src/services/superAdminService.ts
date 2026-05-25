@@ -1,5 +1,8 @@
+import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { env } from "../config/env";
 import { superAdminModel } from "../models/superAdminModel";
+import { superAdminAuthModel } from "../models/superAdminAuthModel";
 import { emailService } from "./emailService";
 import type { SafeUser } from "../types/auth";
 import type { ManualPlan, Organization, SubPlan, SuperAdminActivityLog, TopUpPlan } from "../types/superAdmin";
@@ -323,5 +326,44 @@ export const superAdminService = {
     organization: string | undefined;
   }) {
     return superAdminModel.listActivityLogsFromDb(query);
+  },
+
+  async listAdmins(): Promise<{ id: string; name: string; email: string; status: "Active" | "Inactive" }[]> {
+    const admins = await superAdminAuthModel.listAll();
+    return admins.map((a) => ({
+      id: a.id,
+      name: a.name,
+      email: a.email,
+      status: a.status === "active" ? "Active" : "Inactive",
+    }));
+  },
+
+  async createAdmin(
+    user: SafeUser,
+    payload: { name: string; email: string; password: string },
+  ): Promise<{ id: string; name: string; email: string; status: "Active" }> {
+    const name = payload.name?.trim();
+    const email = payload.email?.trim();
+    const password = payload.password;
+    if (!name) throw new Error("Name is required");
+    if (!email) throw new Error("Email is required");
+    if (!password) throw new Error("Password is required");
+
+    const existing = await superAdminAuthModel.findByEmail(email);
+    if (existing) throw new Error("An admin with this email already exists");
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const id = crypto.randomUUID();
+    await superAdminAuthModel.createAdmin({ id, name, email, passwordHash });
+    await addLog(user, "User", "Admin Created", `Created admin ${name}`);
+    return { id, name, email, status: "Active" };
+  },
+
+  async deleteAdmin(user: SafeUser, id: string): Promise<boolean> {
+    if (user.id === id) throw new Error("Cannot delete your own account");
+    const admin = await superAdminAuthModel.findById(id);
+    const ok = await superAdminAuthModel.deleteById(id);
+    if (ok && admin) await addLog(user, "User", "Admin Deleted", `Deleted admin ${admin.name}`);
+    return ok;
   },
 };

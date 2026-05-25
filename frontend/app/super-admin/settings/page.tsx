@@ -12,22 +12,13 @@ interface AdminUser {
   avatar: string;
 }
 
-const initAdmins: AdminUser[] = [
-  { id: 'adm-1', name: 'Sarah Chen', email: 'sarah.chen@custodox.io', role: 'Super Admin', status: 'Active', lastLogin: '2026-04-07 09:14', avatar: 'SC' },
-  { id: 'adm-2', name: 'James Okafor', email: 'james.okafor@custodox.io', role: 'Admin', status: 'Active', lastLogin: '2026-04-06 17:42', avatar: 'JO' },
-  { id: 'adm-3', name: 'Maria Lopez', email: 'maria.lopez@custodox.io', role: 'Admin', status: 'Inactive', lastLogin: '2026-03-28 11:05', avatar: 'ML' },
-];
-
-const avatarColors: Record<string, string> = {
-  'adm-1': 'bg-[#0097B2]',
-  'adm-2': 'bg-[#7c3aed]',
-  'adm-3': 'bg-[#d97706]',
-};
+const AVATAR_COLOR_PALETTE = ['bg-[#0097B2]', 'bg-[#7c3aed]', 'bg-[#d97706]', 'bg-[#00c896]', 'bg-[#ec4899]', 'bg-[#16a34a]'];
 
 export default function AdminSettingsPage() {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
   const [activeSection, setActiveSection] = useState<'profile' | 'security' | 'admins'>('profile');
-  const [admins, setAdmins] = useState<AdminUser[]>(initAdmins);
+  const [admins, setAdmins] = useState<AdminUser[]>([]);
+  const [loadingAdmins, setLoadingAdmins] = useState(false);
   const [showAddAdmin, setShowAddAdmin] = useState(false);
   const [deleteAdminId, setDeleteAdminId] = useState<string | null>(null);
 
@@ -42,7 +33,7 @@ export default function AdminSettingsPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const [newAdmin, setNewAdmin] = useState({ name: '', email: '', role: 'Admin' as 'Super Admin' | 'Admin' });
+  const [newAdmin, setNewAdmin] = useState({ name: '', email: '', password: '', role: 'Admin' as 'Super Admin' | 'Admin' });
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -77,6 +68,41 @@ export default function AdminSettingsPage() {
     };
     void loadProfile();
   }, [API_BASE_URL]);
+
+  useEffect(() => {
+    if (activeSection !== 'admins') return;
+    const loadAdmins = async () => {
+      try {
+        setLoadingAdmins(true);
+        setError('');
+        const response = await fetch(`${API_BASE_URL}/super-admin/admins`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load admins (${response.status})`);
+        }
+        const data = (await response.json()) as { id: string; name: string; email: string; status: string }[];
+        setAdmins(
+          data.map((a) => ({
+            id: a.id,
+            name: a.name,
+            email: a.email,
+            role: 'Admin' as const,
+            status: (a.status === 'Active' ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
+            lastLogin: 'N/A',
+            avatar: a.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase(),
+          }))
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load admins');
+      } finally {
+        setLoadingAdmins(false);
+      }
+    };
+    void loadAdmins();
+  }, [activeSection, API_BASE_URL]);
 
   const handleSaveProfile = async () => {
     try {
@@ -153,26 +179,53 @@ export default function AdminSettingsPage() {
     }
   };
 
-  const handleAddAdmin = () => {
-    if (!newAdmin.name || !newAdmin.email) return;
-    const id = `adm-${Date.now()}`;
-    setAdmins((prev) => [...prev, {
-      id,
-      name: newAdmin.name,
-      email: newAdmin.email,
-      role: newAdmin.role,
-      status: 'Active',
-      lastLogin: 'Never',
-      avatar: newAdmin.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase(),
-    }]);
-    setNewAdmin({ name: '', email: '', role: 'Admin' });
-    setShowAddAdmin(false);
+  const handleAddAdmin = async () => {
+    if (!newAdmin.name || !newAdmin.email || !newAdmin.password) return;
+    try {
+      setActionLoading(true);
+      setError('');
+      const response = await fetch(`${API_BASE_URL}/super-admin/admins`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newAdmin.name, email: newAdmin.email, password: newAdmin.password }),
+      });
+      if (!response.ok) {
+        let message = `Failed to add admin (${response.status})`;
+        try {
+          const body = (await response.json()) as { message?: string };
+          if (body?.message) message = `${message}: ${body.message}`;
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+      const created = (await response.json()) as { id: string; name: string; email: string; status?: string };
+      setAdmins((prev) => [
+        ...prev,
+        {
+          id: created.id,
+          name: created.name,
+          email: created.email,
+          role: 'Admin' as const,
+          status: 'Active' as const,
+          lastLogin: 'Never',
+          avatar: created.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase(),
+        },
+      ]);
+      setNewAdmin({ name: '', email: '', password: '', role: 'Admin' });
+      setShowAddAdmin(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add admin');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const sections = [
     { key: 'profile', label: 'Profile', icon: 'ri-user-line' },
     { key: 'security', label: 'Security', icon: 'ri-shield-keyhole-line' },
-    // { key: 'admins', label: 'Admin Accounts', icon: 'ri-team-line' },
+    { key: 'admins', label: 'Admin Accounts', icon: 'ri-team-line' },
   ] as const;
 
   return (
@@ -398,6 +451,11 @@ export default function AdminSettingsPage() {
 
           {activeSection === 'admins' && (
             <div className="space-y-4">
+              {loadingAdmins && (
+                <div className="rounded-lg border border-brand-border bg-white px-4 py-3 text-sm text-brand-muted">
+                  Loading admin accounts...
+                </div>
+              )}
               <div className="bg-white rounded-xl border border-brand-border overflow-hidden">
                 <div className="px-4 sm:px-5 py-3.5 border-b border-brand-border flex items-center justify-between flex-wrap gap-2">
                   <h2 className="font-outfit font-semibold text-brand-navy text-sm">Admin Accounts</h2>
@@ -423,7 +481,7 @@ export default function AdminSettingsPage() {
                         <tr key={admin.id} className="hover:bg-brand-surface/50">
                           <td className="px-5 py-3.5">
                             <div className="flex items-center gap-3">
-                              <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${avatarColors[admin.id] ?? 'bg-brand-muted'}`}>
+                              <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${AVATAR_COLOR_PALETTE[admins.indexOf(admin) % AVATAR_COLOR_PALETTE.length]}`}>
                                 <span className="text-white text-xs font-bold">{admin.avatar}</span>
                               </div>
                               <span className="text-sm font-medium text-brand-navy">{admin.name}</span>
@@ -462,7 +520,7 @@ export default function AdminSettingsPage() {
                     <div key={admin.id} className="p-4 space-y-2.5">
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${avatarColors[admin.id] ?? 'bg-brand-muted'}`}>
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${AVATAR_COLOR_PALETTE[admins.indexOf(admin) % AVATAR_COLOR_PALETTE.length]}`}>
                             <span className="text-white text-xs font-bold">{admin.avatar}</span>
                           </div>
                           <div className="min-w-0">
@@ -527,6 +585,16 @@ export default function AdminSettingsPage() {
                 />
               </div>
               <div>
+                <label className="block text-xs font-medium text-brand-muted mb-1.5">Password *</label>
+                <input
+                  type="password"
+                  value={newAdmin.password}
+                  onChange={(e) => setNewAdmin((p) => ({ ...p, password: e.target.value }))}
+                  className="w-full px-3 py-2 border border-brand-border rounded-lg text-sm focus:outline-none focus:border-[#0097B2] transition-colors"
+                  placeholder="Temporary password"
+                />
+              </div>
+              <div>
                 <label className="block text-xs font-medium text-brand-muted mb-1.5">Role</label>
                 <div className="flex gap-2">
                   {(['Admin', 'Super Admin'] as const).map((r) => (
@@ -546,7 +614,13 @@ export default function AdminSettingsPage() {
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={() => setShowAddAdmin(false)} className="flex-1 py-2.5 rounded-lg border border-brand-border text-sm font-medium text-brand-body hover:bg-brand-surface transition-colors whitespace-nowrap">Cancel</button>
-              <button onClick={handleAddAdmin} className="flex-1 py-2.5 rounded-lg bg-[#0097B2] text-white text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap">Add Admin</button>
+              <button
+                onClick={() => void handleAddAdmin()}
+                disabled={actionLoading || !newAdmin.name || !newAdmin.email || !newAdmin.password}
+                className="flex-1 py-2.5 rounded-lg bg-[#0097B2] text-white text-sm font-medium hover:bg-[#007a91] transition-colors whitespace-nowrap disabled:opacity-60"
+              >
+                {actionLoading ? 'Adding...' : 'Add Admin'}
+              </button>
             </div>
           </div>
         </div>
@@ -566,7 +640,40 @@ export default function AdminSettingsPage() {
             </div>
             <div className="flex gap-3 w-full">
               <button onClick={() => setDeleteAdminId(null)} className="flex-1 py-2.5 rounded-lg border border-brand-border text-sm font-medium text-brand-body hover:bg-brand-surface transition-colors whitespace-nowrap">Cancel</button>
-              <button onClick={() => { setAdmins((prev) => prev.filter((a) => a.id !== deleteAdminId)); setDeleteAdminId(null); }} className="flex-1 py-2.5 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors whitespace-nowrap">Remove</button>
+              <button
+                onClick={async () => {
+                  if (!deleteAdminId) return;
+                  try {
+                    setActionLoading(true);
+                    setError('');
+                    const response = await fetch(`${API_BASE_URL}/super-admin/admins/${deleteAdminId}`, {
+                      method: 'DELETE',
+                      credentials: 'include',
+                    });
+                    if (!response.ok) {
+                      let message = `Failed to remove admin (${response.status})`;
+                      try {
+                        const body = (await response.json()) as { message?: string };
+                        if (body?.message) message = `${message}: ${body.message}`;
+                      } catch {
+                        // ignore
+                      }
+                      throw new Error(message);
+                    }
+                    setAdmins((prev) => prev.filter((a) => a.id !== deleteAdminId));
+                    setDeleteAdminId(null);
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : 'Failed to remove admin');
+                    setDeleteAdminId(null);
+                  } finally {
+                    setActionLoading(false);
+                  }
+                }}
+                disabled={actionLoading}
+                className="flex-1 py-2.5 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors whitespace-nowrap disabled:opacity-60"
+              >
+                {actionLoading ? 'Removing...' : 'Remove'}
+              </button>
             </div>
           </div>
         </div>

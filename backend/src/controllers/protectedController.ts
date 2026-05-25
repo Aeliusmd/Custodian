@@ -1301,6 +1301,23 @@ export const protectedController = {
         fileName: displayName,
         categoryName: categoryId,
       });
+      void (async () => {
+        try {
+          const [orgStorageRows] = await dbPool.query(
+            `SELECT storage_used_gb, storage_limit_gb FROM \`${env.mysqlDatabase}\`.organizations WHERE id = ? LIMIT 1`,
+            [req.user?.organizationId ?? ""],
+          );
+          const orgSt = (orgStorageRows as Array<{ storage_used_gb: number | null; storage_limit_gb: number | null }>)[0];
+          if (orgSt) {
+            const storageUsedGb = Number(orgSt.storage_used_gb ?? 0);
+            const storageTotalGb = Math.max(1, Number(orgSt.storage_limit_gb ?? 10));
+            const storagePercent = Math.min(100, Math.round((storageUsedGb / storageTotalGb) * 100));
+            if (storagePercent >= 80) {
+              void notifyOrgAdmin(req.user?.organizationId ?? "", "system_alerts", { storageUsedGb, storageTotalGb, storagePercent });
+            }
+          }
+        } catch { /* non-critical */ }
+      })();
 
       if (req.user?.id && req.user?.organizationId) {
         void recordOrgActivity(req.user.id, req.user.organizationId, {
@@ -2065,11 +2082,26 @@ export const protectedController = {
       );
       await conn.commit();
       if (req.user?.id && req.user?.organizationId) {
-        void recordOrgActivity(req.user.id, req.user.organizationId, {
+        const orgId = req.user.organizationId;
+        void recordOrgActivity(req.user.id, orgId, {
           action: "Metadata Updated",
           module: "Documents",
           description: `Updated metadata for document ${id}.`,
         });
+        void (async () => {
+          try {
+            const [nameRows] = await dbPool.query(
+              `SELECT name FROM \`${dbName}\`.documents WHERE id = ? LIMIT 1`,
+              [id],
+            );
+            const docName = asString((nameRows as Array<{ name: string }>)[0]?.name).trim() || id;
+            void notifyOrgAdmin(orgId, "version_notifications", {
+              actorName: req.user?.fullName,
+              actorEmail: req.user?.email,
+              fileName: docName,
+            });
+          } catch { /* non-critical */ }
+        })();
       }
       return res.status(200).json({ success: true });
     } catch (error) {

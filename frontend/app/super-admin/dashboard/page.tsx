@@ -59,7 +59,7 @@ const topupStats = [
   { label: 'Top-Up Revenue', value: '$6,840', icon: 'ri-coins-line', iconColorClass: 'text-[#0097B2]', iconBgClass: 'bg-[#0097B2]/10' },
 ];
 
-const totalPlanCount = planDistribution.reduce((a, p) => a + p.count, 0);
+const BAR_COLORS = ['#0097B2', '#00c896', '#d97706', '#7c3aed', '#ec4899', '#16a34a'];
 
 export default function SuperAdminDashboard() {
   const [activeChart, setActiveChart] = useState<'growth' | 'revenue'>('growth');
@@ -67,12 +67,20 @@ export default function SuperAdminDashboard() {
     kpis: typeof kpis;
     topupStats: typeof topupStats;
     recentActivity: typeof recentActivity;
+    topOrgs: { name: string; plan: string; revenue: string; status: 'Active' | 'Inactive'; docs: string }[];
+    planDistribution: { label: string; count: number }[];
+    orgGrowth: { month: string; count: number }[];
   } | null>(null);
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
   const kpisToRender = dashboardSummary?.kpis ?? kpis;
   const topupStatsToRender = dashboardSummary?.topupStats ?? topupStats;
   const recentActivityToRender = dashboardSummary?.recentActivity ?? recentActivity;
+  const topOrgsToRender = dashboardSummary?.topOrgs ?? topOrgs;
+  const planDistToRender = dashboardSummary?.planDistribution ?? null;
+  const activePlanDist = planDistToRender ?? planDistribution;
+  const totalPlanCount = activePlanDist.reduce((a, p) => a + p.count, 0);
+  const orgGrowthFromApi = dashboardSummary?.orgGrowth ?? null;
 
   useEffect(() => {
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
@@ -161,7 +169,31 @@ export default function SuperAdminDashboard() {
             </div>
           </div>
           <div className="flex items-end gap-3 h-40">
-            {(activeChart === 'growth' ? orgGrowth : revenueData).map((d, i) => (
+            {activeChart === 'growth' ? (
+              orgGrowthFromApi !== null ? (() => {
+                const maxCount = Math.max(...orgGrowthFromApi.map((i) => i.count), 1);
+                return orgGrowthFromApi.map((item, i) => (
+                  <div key={i} className="flex-1 flex flex-col items-center gap-1.5">
+                    <span className="text-[10px] text-brand-muted font-medium">{item.count.toString()}</span>
+                    <div className="w-full h-24 bg-brand-surface rounded-t-md overflow-hidden flex items-end">
+                      <div
+                        className="w-full bg-[#0097B2] rounded-t-md transition-all duration-500"
+                        style={{ height: `${(item.count / maxCount) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] text-brand-muted">{item.month}</span>
+                  </div>
+                ));
+              })() : orgGrowth.map((d, i) => (
+                <div key={i} className="flex-1 flex flex-col items-center gap-1.5">
+                  <span className="text-[10px] text-brand-muted font-medium">{d.display}</span>
+                  <div className="w-full h-24 bg-brand-surface rounded-t-md overflow-hidden flex items-end">
+                    <div className={`w-full bg-[#0097B2] rounded-t-md transition-all duration-500 ${d.barClass}`} />
+                  </div>
+                  <span className="text-[10px] text-brand-muted">{d.month}</span>
+                </div>
+              ))
+            ) : revenueData.map((d, i) => (
               <div key={i} className="flex-1 flex flex-col items-center gap-1.5">
                 <span className="text-[10px] text-brand-muted font-medium">{d.display}</span>
                 <div className="w-full h-24 bg-brand-surface rounded-t-md overflow-hidden flex items-end">
@@ -216,19 +248,38 @@ export default function SuperAdminDashboard() {
         <div className="bg-white rounded-xl border border-brand-border p-5">
           <h2 className="font-outfit font-semibold text-brand-navy text-sm mb-4">Plan Distribution</h2>
           <div className="space-y-3">
-            {planDistribution.map((p) => (
-              <div key={p.label}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-brand-body">{p.label}</span>
-                  <span className="text-xs font-semibold text-brand-navy">{p.count}</span>
-                </div>
-                <div className="h-1.5 bg-brand-surface rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${p.widthClass} ${p.barColorClass}`}
-                  />
-                </div>
-              </div>
-            ))}
+            {planDistToRender !== null
+              ? planDistToRender.map((p, idx) => {
+                  const widthPct = totalPlanCount > 0 ? (p.count / totalPlanCount) * 100 : 0;
+                  const color = BAR_COLORS[idx % BAR_COLORS.length];
+                  return (
+                    <div key={p.label}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-brand-body">{p.label}</span>
+                        <span className="text-xs font-semibold text-brand-navy">{p.count}</span>
+                      </div>
+                      <div className="h-1.5 bg-brand-surface rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{ width: `${widthPct}%`, backgroundColor: color }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })
+              : planDistribution.map((p) => (
+                  <div key={p.label}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-brand-body">{p.label}</span>
+                      <span className="text-xs font-semibold text-brand-navy">{p.count}</span>
+                    </div>
+                    <div className="h-1.5 bg-brand-surface rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${p.widthClass} ${p.barColorClass}`}
+                      />
+                    </div>
+                  </div>
+                ))}
           </div>
           <div className="mt-4 pt-4 border-t border-brand-border text-xs text-brand-muted">
             Total: <span className="font-semibold text-brand-navy">{totalPlanCount} organizations</span>
@@ -251,7 +302,7 @@ export default function SuperAdminDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-brand-border">
-                {topOrgs.map((o, i) => (
+                {topOrgsToRender.map((o, i) => (
                   <tr key={i} className="hover:bg-brand-surface/50 cursor-pointer">
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-3">
@@ -273,7 +324,7 @@ export default function SuperAdminDashboard() {
             </table>
           </div>
           <div className="md:hidden divide-y divide-brand-border">
-            {topOrgs.map((o, i) => (
+            {topOrgsToRender.map((o, i) => (
               <div key={i} className="px-4 py-3.5 space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2.5 min-w-0">

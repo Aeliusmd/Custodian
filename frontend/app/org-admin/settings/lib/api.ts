@@ -18,6 +18,7 @@ const defaultProfile: UserProfile = {
   language: 'English',
   role: 'Org Admin',
   bio: 'Responsible for managing the Custodox document management system, overseeing all document operations, category management, and user access control within the organization.',
+  avatarDataUrl: '',
 };
 
 const defaultNotifications: NotificationSetting[] = [
@@ -146,6 +147,7 @@ const requestWithFallback = async <T,>(
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...init,
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...(init.headers ?? {}),
@@ -185,14 +187,18 @@ export const settingsApi = {
   },
 
   async changePassword(payload: PasswordPayload): Promise<{ success: boolean }> {
-    return requestWithFallback<{ success: boolean }>(
-      '/org-admin/settings/change-password',
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      },
-      () => ({ success: true }),
-    );
+    const response = await fetch(`${API_BASE_URL}/org-admin/settings/change-password`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { message?: string };
+      throw new Error(body.message ?? `Request failed with ${response.status}`);
+    }
+    return (await response.json()) as { success: boolean };
   },
 
   async getNotificationSettings(): Promise<NotificationSetting[]> {

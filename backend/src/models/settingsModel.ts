@@ -4,13 +4,13 @@ import type { ActivityLog, NotificationSetting, OrgActivityLog, UserProfile } fr
 
 /** Default notification rows seeded for every new user on first access. */
 const DEFAULT_NOTIFICATIONS: Array<Omit<NotificationSetting, ""> & { sort_order: number }> = [
-  { id: "document_uploads",      label: "Document Uploads",  description: "Notify when a document is uploaded",          icon: "ri-upload-cloud-2-line", enabled: true,  category: "Documents", sort_order: 0 },
-  { id: "document_shared",       label: "Document Shared",   description: "Notify when a document is shared with you",   icon: "ri-share-line",          enabled: true,  category: "Documents", sort_order: 1 },
-  { id: "team_updates",          label: "Team Updates",      description: "Notify on team member changes",                icon: "ri-team-line",           enabled: false, category: "Team",      sort_order: 2 },
-  { id: "system_alerts",         label: "System Alerts",     description: "Notify on system events",                     icon: "ri-bell-line",           enabled: true,  category: "System",    sort_order: 3 },
-  { id: "weekly_reports",        label: "Weekly Reports",    description: "Receive a weekly activity summary",            icon: "ri-bar-chart-2-line",    enabled: false, category: "Reports",   sort_order: 4 },
-  { id: "version_notifications", label: "Version Updates",   description: "Notify when a new version is released",       icon: "ri-history-line",        enabled: true,  category: "System",    sort_order: 5 },
-  { id: "login_notifications",   label: "Login Alerts",      description: "Notify on new login to your account",         icon: "ri-shield-check-line",   enabled: true,  category: "Security",  sort_order: 6 },
+  { id: "document_uploads",      label: "Upload Notifications",     description: "Get notified when a new document is uploaded to any category",              icon: "ri-upload-cloud-2-line", enabled: true,  category: "Documents", sort_order: 0 },
+  { id: "document_shared",       label: "Sharing Notifications",    description: "Receive alerts when documents are shared with you or on your behalf",        icon: "ri-share-line",          enabled: true,  category: "Documents", sort_order: 1 },
+  { id: "version_notifications", label: "Version Updates",          description: "Be notified when a new version of a document is uploaded",                  icon: "ri-history-line",        enabled: false, category: "Documents", sort_order: 2 },
+  { id: "team_updates",          label: "User Management Alerts",   description: "Get alerts when new users are added, removed, or their status changes",      icon: "ri-team-line",           enabled: true,  category: "Users",     sort_order: 3 },
+  { id: "login_notifications",   label: "Login Activity",           description: "Receive email alerts for sign-ins from new devices or unusual locations",    icon: "ri-shield-check-line",   enabled: true,  category: "Security",  sort_order: 4 },
+  { id: "system_alerts",         label: "Storage Limit Warnings",   description: "Get notified when storage usage reaches 80% or 95% of your limit",          icon: "ri-bell-line",           enabled: true,  category: "System",    sort_order: 5 },
+  { id: "weekly_reports",        label: "Weekly Summary Report",    description: "Receive a weekly digest of activity, uploads, and user actions",             icon: "ri-bar-chart-2-line",    enabled: false, category: "Reports",   sort_order: 6 },
 ];
 
 /** Maps legacy plain-text icon names (stored before Remix Icon migration) to their ri- equivalents. */
@@ -111,6 +111,17 @@ export const settingsModel = {
     const count = Number((countRows as Array<{ cnt: number }>)[0]?.cnt ?? 0);
     if (count === 0) {
       await this.initNotifications(userId, tenantDb);
+    } else {
+      // Lazy migration: sync label, description, and category to current defaults.
+      for (const n of DEFAULT_NOTIFICATIONS) {
+        await dbPool.query(
+          `UPDATE \`${tenantDb}\`.notification_settings
+              SET label = ?, description = ?, category = ?, sort_order = ?
+            WHERE user_id = ?
+              AND id = ?`,
+          [n.label, n.description, n.category, n.sort_order, userId, n.id],
+        );
+      }
     }
 
     const [rows] = await dbPool.query(

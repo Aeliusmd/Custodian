@@ -24,4 +24,8 @@ superAdminRoutes.delete("/billing/topup-plans/:id", superAdminController.deleteT
 
 superAdminRoutes.get("/activity-logs", superAdminController.listActivity);
 
+superAdminRoutes.get("/admins", superAdminController.listAdmins);
+superAdminRoutes.post("/admins", superAdminController.createAdmin);
+superAdminRoutes.delete("/admins/:id", superAdminController.deleteAdmin);
+
 export default superAdminRoutes;

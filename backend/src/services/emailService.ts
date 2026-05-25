@@ -202,4 +202,84 @@ export const emailService = {
 <p>If this was unexpected, please review your team's access in Custodox.</p>`,
     });
   },
+
+  async sendVersionUpdateNotification(opts: {
+    to: string;
+    adminName: string;
+    actorName?: string | undefined;
+    fileName?: string | undefined;
+    categoryName?: string | undefined;
+    orgName?: string | undefined;
+  }): Promise<void> {
+    if (!transporter) {
+      console.log(`[NOTIFY-FALLBACK] version_update to=${opts.to} file=${opts.fileName ?? "unknown"}`);
+      return;
+    }
+    await transporter.sendMail({
+      from: env.smtpFrom,
+      to: opts.to,
+      subject: `[Custodox] Document updated: ${opts.fileName ?? "a document"}`,
+      html: `<p>Hi ${opts.adminName},</p>
+<p><strong>${opts.actorName ?? "A user"}</strong> updated a document in <strong>${opts.orgName ?? "your organisation"}</strong>.</p>
+<ul>
+  <li><strong>File:</strong> ${opts.fileName ?? "Unknown"}</li>
+  <li><strong>Category:</strong> ${opts.categoryName ?? "Uncategorised"}</li>
+</ul>
+<p>Log in to Custodox to review the latest changes.</p>`,
+    });
+  },
+
+  async sendStorageAlertNotification(opts: {
+    to: string;
+    adminName: string;
+    storageUsedGb: number;
+    storageTotalGb: number;
+    storagePercent: number;
+    orgName?: string | undefined;
+  }): Promise<void> {
+    if (!transporter) {
+      console.log(`[NOTIFY-FALLBACK] storage_alert to=${opts.to} percent=${opts.storagePercent}%`);
+      return;
+    }
+    const isCritical = opts.storagePercent >= 95;
+    await transporter.sendMail({
+      from: env.smtpFrom,
+      to: opts.to,
+      subject: `[Custodox] Storage ${isCritical ? "critical" : "warning"}: ${opts.storagePercent}% used — ${opts.orgName ?? "your organisation"}`,
+      html: `<p>Hi ${opts.adminName},</p>
+<p>Your organisation <strong>${opts.orgName ?? ""}</strong> has used <strong>${opts.storagePercent}%</strong> of its storage allocation.</p>
+<ul>
+  <li><strong>Used:</strong> ${opts.storageUsedGb.toFixed(2)} GB</li>
+  <li><strong>Limit:</strong> ${opts.storageTotalGb.toFixed(2)} GB</li>
+</ul>
+<p>${isCritical ? "&#9888; <strong>Critical:</strong> You are nearly out of storage. Upgrade your plan or remove unused documents immediately." : "&#9888; <strong>Warning:</strong> You are approaching your storage limit. Consider upgrading your plan or removing unused documents."}</p>`,
+    });
+  },
+
+  async sendWeeklyReportNotification(opts: {
+    to: string;
+    adminName: string;
+    orgName?: string | undefined;
+    totalDocuments: number;
+    uploadsThisWeek: number;
+    activeUsers: number;
+  }): Promise<void> {
+    if (!transporter) {
+      console.log(`[NOTIFY-FALLBACK] weekly_report to=${opts.to}`);
+      return;
+    }
+    await transporter.sendMail({
+      from: env.smtpFrom,
+      to: opts.to,
+      subject: `[Custodox] Weekly summary — ${opts.orgName ?? "your organisation"}`,
+      html: `<p>Hi ${opts.adminName},</p>
+<p>Here is your weekly activity summary for <strong>${opts.orgName ?? "your organisation"}</strong>:</p>
+<ul>
+  <li><strong>Uploads this week:</strong> ${opts.uploadsThisWeek}</li>
+  <li><strong>Total documents:</strong> ${opts.totalDocuments}</li>
+  <li><strong>Active users:</strong> ${opts.activeUsers}</li>
+</ul>
+<p>Log in to Custodox to view the full activity report.</p>`,
+    });
+  },
 };

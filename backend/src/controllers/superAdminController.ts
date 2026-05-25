@@ -192,4 +192,37 @@ export const superAdminController = {
       return res.status(500).json({ message });
     }
   },
+
+  async listAdmins(_req: Request, res: Response) {
+    try {
+      const admins = await superAdminService.listAdmins();
+      return res.status(200).json(admins);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to fetch admins";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async createAdmin(req: Request, res: Response) {
+    if (!req.user) return unauthorized(res);
+    try {
+      const admin = await superAdminService.createAdmin(req.user, req.body);
+      return res.status(201).json(admin);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create admin";
+      return res.status(400).json({ message });
+    }
+  },
+
+  async deleteAdmin(req: Request, res: Response) {
+    if (!req.user) return unauthorized(res);
+    try {
+      const ok = await superAdminService.deleteAdmin(req.user, asString(req.params.id) ?? "");
+      if (!ok) return res.status(404).json({ message: "Admin not found" });
+      return res.status(204).send();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete admin";
+      return res.status(400).json({ message });
+    }
+  },
 };

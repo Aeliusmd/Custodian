@@ -111,7 +111,7 @@ export default function OrgAdminLayout({ children }: OrgAdminLayoutProps) {
   };
 
   return (
-    <div className="flex min-h-screen bg-[#f8f9fb] font-inter">
+    <div className="flex h-screen overflow-hidden bg-[#f8f9fb] font-inter">
       {showSignOutModal && (
         <div className="fixed inset-0 z-[999] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setShowSignOutModal(false)} />
@@ -193,7 +193,7 @@ export default function OrgAdminLayout({ children }: OrgAdminLayoutProps) {
       </aside>
 
       {/* Main Content */}
-      <div className={`flex-1 flex flex-col ${collapsed ? 'md:ml-16' : 'md:ml-60'}`}>
+      <div className={`flex-1 flex flex-col min-h-0 overflow-hidden ${collapsed ? 'md:ml-16' : 'md:ml-60'}`}>
         <header className="h-14 bg-white border-b border-gray-200 flex items-center px-3 sm:px-4 md:px-5 gap-2 sm:gap-4 flex-shrink-0">
           <button
             onClick={toggleSidebar}

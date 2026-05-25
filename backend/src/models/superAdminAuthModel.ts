@@ -102,4 +102,33 @@ export const superAdminAuthModel = {
     );
     return Number((result as { affectedRows?: number }).affectedRows ?? 0) > 0;
   },
+
+  async listAll(): Promise<Omit<SuperAdminAuthRecord, "passwordHash">[]> {
+    await ensureSuperAdminsPhoneColumn();
+    const [rows] = await dbPool.query(
+      `SELECT id, name, email, phone, status
+       FROM \`${env.mysqlDatabase}\`.super_admins
+       ORDER BY name ASC`,
+    );
+    return rows as Omit<SuperAdminAuthRecord, "passwordHash">[];
+  },
+
+  async createAdmin(payload: { id: string; name: string; email: string; passwordHash: string }): Promise<boolean> {
+    const [result] = await dbPool.query(
+      `INSERT INTO \`${env.mysqlDatabase}\`.super_admins (id, name, email, password_hash, status)
+       VALUES (?, ?, ?, ?, 'active')`,
+      [payload.id, payload.name, payload.email, payload.passwordHash],
+    );
+    return Number((result as { affectedRows?: number }).affectedRows ?? 0) > 0;
+  },
+
+  async deleteById(id: string): Promise<boolean> {
+    const [result] = await dbPool.query(
+      `DELETE FROM \`${env.mysqlDatabase}\`.super_admins
+       WHERE id = ?
+       LIMIT 1`,
+      [id],
+    );
+    return Number((result as { affectedRows?: number }).affectedRows ?? 0) > 0;
+  },
 };

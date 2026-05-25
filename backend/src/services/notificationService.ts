@@ -29,6 +29,18 @@ export interface NotificationPayload {
   loginTime?: string | undefined;
   /** Organisation name — filled automatically from DB; safe to pass "" or omit. */
   orgName?: string | undefined;
+  /** Storage used in GB (system_alerts). */
+  storageUsedGb?: number | undefined;
+  /** Storage limit in GB (system_alerts). */
+  storageTotalGb?: number | undefined;
+  /** Storage usage percentage 0–100 (system_alerts). */
+  storagePercent?: number | undefined;
+  /** Total documents in the org (weekly_reports). */
+  totalDocuments?: number | undefined;
+  /** Documents uploaded this week (weekly_reports). */
+  uploadsThisWeek?: number | undefined;
+  /** Active users count (weekly_reports). */
+  activeUsers?: number | undefined;
 }
 
 /**
@@ -134,6 +146,37 @@ export async function notifyOrgAdmin(
             adminName: admin.name,
             ...payload,
             orgName,
+          });
+          break;
+
+        case "version_notifications":
+          await emailService.sendVersionUpdateNotification({
+            to: admin.email,
+            adminName: admin.name,
+            ...payload,
+            orgName,
+          });
+          break;
+
+        case "system_alerts":
+          await emailService.sendStorageAlertNotification({
+            to: admin.email,
+            adminName: admin.name,
+            storageUsedGb: payload.storageUsedGb ?? 0,
+            storageTotalGb: payload.storageTotalGb ?? 10,
+            storagePercent: payload.storagePercent ?? 0,
+            orgName,
+          });
+          break;
+
+        case "weekly_reports":
+          await emailService.sendWeeklyReportNotification({
+            to: admin.email,
+            adminName: admin.name,
+            orgName,
+            totalDocuments: payload.totalDocuments ?? 0,
+            uploadsThisWeek: payload.uploadsThisWeek ?? 0,
+            activeUsers: payload.activeUsers ?? 0,
           });
           break;
 
