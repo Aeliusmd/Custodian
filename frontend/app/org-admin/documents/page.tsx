@@ -326,7 +326,36 @@ export default function AllDocumentsPage() {
   };
 
   const handleBulkDownload = () => {
-    showToast(`Downloading ${selected.size} files as ZIP...`);
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    showToast(`Preparing ZIP for ${ids.length} file${ids.length > 1 ? 's' : ''}…`);
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/protected/org-admin/documents/bulk-download`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { message?: string };
+          throw new Error(body.message ?? `Failed (${res.status})`);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const today = new Date().toISOString().slice(0, 10);
+        a.download = `custodox-documents-${today}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast(`Downloaded ${ids.length} file${ids.length > 1 ? 's' : ''} as ZIP`);
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : 'Failed to download ZIP', 'error');
+      }
+    })();
   };
 
   const handleDownload = (doc: DocumentRecord) => {

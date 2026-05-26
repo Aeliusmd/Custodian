@@ -10,6 +10,7 @@ import { enqueueDocumentOcr } from "../services/documentOcrQueue";
 import { absoluteFromStorageRoot, previewPageRelativePath, unlinkQuiet, writeUploadedDocumentFile } from "../services/documentStorageService";
 import { sanitizeStoredFileName } from "../utils/uploadFileName";
 import { notifyOrgAdmin } from "../services/notificationService";
+import { emailService } from "../services/emailService";
 import { settingsModel } from "../models/settingsModel";
 
 const recordOrgActivity = async (
@@ -161,6 +162,27 @@ const ensureTenantDocumentsOcrSchema = async (dbName: string): Promise<void> => 
   await ensureTenantDocumentsOcrColumn(dbName);
   await ensureTenantDocumentsOcrStatusColumn(dbName);
   await ensureTenantDocumentsPreviewPageCountColumn(dbName);
+};
+
+const ensureDocumentVersionsTable = async (dbName: string): Promise<void> => {
+  await dbPool.query(
+    `CREATE TABLE IF NOT EXISTS \`${dbName}\`.document_versions (
+       id             VARCHAR(36)   NOT NULL,
+       document_id    VARCHAR(36)   NOT NULL,
+       version_number INT           NOT NULL DEFAULT 1,
+       version_name   VARCHAR(100)  NOT NULL DEFAULT 'v1.0',
+       file_path      VARCHAR(1024) NOT NULL,
+       file_size_kb   INT           NOT NULL DEFAULT 0,
+       file_type      VARCHAR(50)   NOT NULL DEFAULT 'FILE',
+       uploaded_by    VARCHAR(36)   NOT NULL,
+       is_current     TINYINT(1)    NOT NULL DEFAULT 1,
+       notes          TEXT          NULL,
+       created_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       PRIMARY KEY (id),
+       KEY idx_dv_doc     (document_id),
+       KEY idx_dv_current (document_id, is_current)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  );
 };
 
 const mapDbOcrStatusToApi = (value: string | null | undefined): "None" | "Pending" | "Ready" | "Failed" => {
@@ -980,6 +1002,22 @@ export const protectedController = {
           Number.isFinite(fileSizeKb) ? Math.max(0, Math.round(fileSizeKb)) : 0,
           Number.isFinite(pageCount) ? Math.max(0, Math.round(pageCount)) : 0,
           visibility,
+        ],
+      );
+
+      // Seed initial version record
+      await ensureDocumentVersionsTable(dbName);
+      await conn.query(
+        `INSERT INTO \`${dbName}\`.document_versions
+           (id, document_id, version_number, version_name, file_path, file_size_kb, file_type, uploaded_by, is_current)
+         VALUES (?, ?, 1, 'v1.0', ?, ?, ?, ?, 1)`,
+        [
+          crypto.randomUUID(),
+          documentId,
+          storedPath,
+          Number.isFinite(fileSizeKb) ? Math.max(0, Math.round(fileSizeKb)) : 0,
+          fileType,
+          req.user?.id ?? "",
         ],
       );
 
@@ -2218,6 +2256,343 @@ export const protectedController = {
       return res.status(200).json(results);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to search documents";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async bulkDownloadOrgAdminDocuments(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+
+      const { ids } = req.body as { ids?: unknown };
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: "ids array is required" });
+      }
+      const docIds = (ids as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 50);
+      if (docIds.length === 0) return res.status(400).json({ message: "No valid document ids provided" });
+
+      const placeholders = docIds.map(() => "?").join(", ");
+      const [rows] = await dbPool.query(
+        `SELECT id, name, file_path, file_type
+           FROM \`${dbName}\`.documents
+          WHERE id IN (${placeholders})
+            AND status = 'active'`,
+        docIds,
+      );
+      const docs = rows as Array<{ id: string; name: string; file_path: string | null; file_type: string }>;
+      const validDocs = docs.filter((d) => {
+        if (!d.file_path) return false;
+        const abs = absoluteFromStorageRoot(env.storageRoot, d.file_path);
+        return isPathWithinStorageRoot(env.storageRoot, abs) && existsSync(abs);
+      });
+
+      if (validDocs.length === 0) {
+        return res.status(404).json({ message: "No downloadable files found for the selected documents" });
+      }
+
+      const archiver = (await import("archiver")).default;
+      const archive = archiver("zip", { zlib: { level: 6 } });
+
+      const timestamp = new Date().toISOString().slice(0, 10);
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="custodox-documents-${timestamp}.zip"`);
+
+      archive.pipe(res);
+
+      // Track duplicate names — append (n) suffix if needed
+      const usedNames = new Map<string, number>();
+      for (const d of validDocs) {
+        const abs = absoluteFromStorageRoot(env.storageRoot, d.file_path!);
+        const safeName = d.name.replace(/[\r\n]/g, "_").trim() || `document-${d.id}`;
+        const ext = path.extname(safeName);
+        const base = safeName.slice(0, safeName.length - ext.length);
+        const count = usedNames.get(safeName) ?? 0;
+        usedNames.set(safeName, count + 1);
+        const finalName = count === 0 ? safeName : `${base} (${count})${ext}`;
+        archive.file(abs, { name: finalName });
+      }
+
+      archive.on("error", (err) => {
+        if (!res.headersSent) res.status(500).json({ message: "ZIP generation failed" });
+        else res.end();
+        console.error("[bulk-download] archiver error:", err);
+      });
+
+      await archive.finalize();
+    } catch (error) {
+      if (!res.headersSent) {
+        const message = error instanceof Error ? error.message : "Failed to create ZIP archive";
+        res.status(500).json({ message });
+      }
+    }
+  },
+
+  async listOrgAdminDocumentVersions(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const id = asString(req.params.id).trim();
+      if (!id) return res.status(400).json({ message: "Document id is required" });
+
+      await ensureDocumentVersionsTable(dbName);
+
+      // Lazily seed v1 if this document pre-dates the versions feature
+      const [countRows] = await dbPool.query(
+        `SELECT COUNT(*) AS cnt FROM \`${dbName}\`.document_versions WHERE document_id = ?`,
+        [id],
+      );
+      const cnt = Number((countRows as Array<{ cnt: number }>)[0]?.cnt ?? 0);
+      if (cnt === 0) {
+        const [docRows] = await dbPool.query(
+          `SELECT file_path, file_size_kb, file_type, uploaded_by, created_at
+             FROM \`${dbName}\`.documents
+            WHERE id = ?
+              AND status <> 'deleted'
+            LIMIT 1`,
+          [id],
+        );
+        const doc = (docRows as Array<{ file_path: string | null; file_size_kb: number; file_type: string; uploaded_by: string; created_at: Date }>)[0];
+        if (doc) {
+          await dbPool.query(
+            `INSERT IGNORE INTO \`${dbName}\`.document_versions
+               (id, document_id, version_number, version_name, file_path, file_size_kb, file_type, uploaded_by, is_current, created_at)
+             VALUES (?, ?, 1, 'v1.0', ?, ?, ?, ?, 1, ?)`,
+            [crypto.randomUUID(), id, doc.file_path ?? "", doc.file_size_kb ?? 0, doc.file_type ?? "FILE", doc.uploaded_by, doc.created_at],
+          );
+        }
+      }
+
+      const [rows] = await dbPool.query(
+        `SELECT dv.id, dv.version_number, dv.version_name, dv.file_size_kb, dv.file_type, dv.is_current, dv.notes, dv.created_at,
+                COALESCE(NULLIF(TRIM(u.name), ''), u.email, 'Unknown') AS uploaded_by
+           FROM \`${dbName}\`.document_versions dv
+           LEFT JOIN \`${dbName}\`.users u ON u.id = dv.uploaded_by
+          WHERE dv.document_id = ?
+          ORDER BY dv.version_number DESC`,
+        [id],
+      );
+
+      const versions = (rows as Array<{
+        id: string;
+        version_number: number;
+        version_name: string;
+        file_size_kb: number;
+        file_type: string;
+        is_current: number;
+        notes: string | null;
+        created_at: Date;
+        uploaded_by: string;
+      }>).map((v) => ({
+        id: v.id,
+        versionName: v.version_name,
+        date: toIsoDate(new Date(v.created_at)),
+        uploadedBy: v.uploaded_by,
+        isCurrent: Boolean(v.is_current),
+        fileSize: v.file_size_kb >= 1024 ? `${(v.file_size_kb / 1024).toFixed(1)} MB` : `${v.file_size_kb} KB`,
+        fileType: String(v.file_type || "FILE").toUpperCase(),
+        notes: v.notes ?? "",
+      }));
+
+      return res.status(200).json({ versions });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load version history";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async restoreOrgAdminDocumentVersion(req: Request, res: Response) {
+    const conn = await dbPool.getConnection();
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const docId = asString(req.params.id).trim();
+      const versionId = asString(req.params.versionId).trim();
+      if (!docId || !versionId) return res.status(400).json({ message: "Document and version id are required" });
+
+      await ensureDocumentVersionsTable(dbName);
+
+      const [vRows] = await dbPool.query(
+        `SELECT id, version_name, file_path, file_size_kb, file_type, is_current
+           FROM \`${dbName}\`.document_versions
+          WHERE id = ?
+            AND document_id = ?
+          LIMIT 1`,
+        [versionId, docId],
+      );
+      const version = (vRows as Array<{
+        id: string;
+        version_name: string;
+        file_path: string;
+        file_size_kb: number;
+        file_type: string;
+        is_current: number;
+      }>)[0];
+      if (!version) return res.status(404).json({ message: "Version not found" });
+      if (version.is_current) return res.status(400).json({ message: "This version is already current" });
+
+      await conn.beginTransaction();
+
+      // Update document to point to restored version's file
+      await conn.query(
+        `UPDATE \`${dbName}\`.documents
+            SET file_path = ?, file_size_kb = ?, file_type = ?, updated_at = NOW()
+          WHERE id = ?
+            AND status <> 'deleted'`,
+        [version.file_path, version.file_size_kb, version.file_type, docId],
+      );
+
+      // Set all versions of this doc to not-current
+      await conn.query(
+        `UPDATE \`${dbName}\`.document_versions SET is_current = 0 WHERE document_id = ?`,
+        [docId],
+      );
+
+      // Mark the restored version as current
+      await conn.query(
+        `UPDATE \`${dbName}\`.document_versions SET is_current = 1 WHERE id = ?`,
+        [versionId],
+      );
+
+      await conn.commit();
+
+      if (req.user?.id && req.user?.organizationId) {
+        void recordOrgActivity(req.user.id, req.user.organizationId, {
+          action: "Version Restored",
+          module: "Documents",
+          description: `Restored document to ${version.version_name}.`,
+        });
+        void notifyOrgAdmin(req.user.organizationId, "version_notifications", {
+          actorName: req.user.fullName,
+          actorEmail: req.user.email,
+          fileName: version.version_name,
+        });
+      }
+
+      return res.status(200).json({ success: true, restoredVersionName: version.version_name });
+    } catch (error) {
+      await conn.rollback().catch(() => {});
+      const message = error instanceof Error ? error.message : "Failed to restore version";
+      return res.status(500).json({ message });
+    } finally {
+      conn.release();
+    }
+  },
+
+  async shareOrgAdminDocument(req: Request, res: Response) {
+    try {
+      const user = req.user!;
+      const docId = asString(req.params.id).trim();
+      if (!docId) return res.status(400).json({ message: "Document ID required" });
+
+      const { recipientEmails, duration } = req.body as { recipientEmails?: unknown; duration?: unknown };
+
+      const emails = Array.isArray(recipientEmails)
+        ? (recipientEmails as unknown[]).filter(
+            (e): e is string => typeof e === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e),
+          )
+        : [];
+      if (emails.length === 0) {
+        return res.status(400).json({ message: "At least one valid recipient email is required" });
+      }
+
+      const dur = asString(duration).trim() || "30min";
+      const durationMs: Record<string, number> = {
+        "30min": 30 * 60 * 1000,
+        "1hr":   60 * 60 * 1000,
+        "2hr":   2 * 60 * 60 * 1000,
+        "24hr":  24 * 60 * 60 * 1000,
+      };
+      const durationLabels: Record<string, string> = {
+        "30min": "30 minutes",
+        "1hr":   "1 hour",
+        "2hr":   "2 hours",
+        "24hr":  "24 hours",
+      };
+      const ms = durationMs[dur] ?? 30 * 60 * 1000;
+      const label = durationLabels[dur] ?? "30 minutes";
+
+      const dbName = await getOrgDbNameFromSession(user.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+
+      const [docRows] = await dbPool.query(
+        `SELECT name, file_path, file_type FROM \`${dbName}\`.documents WHERE id = ? AND status <> 'deleted' LIMIT 1`,
+        [docId],
+      );
+      const doc = (docRows as Array<{ name: string; file_path: string | null; file_type: string }>)[0];
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+
+      const token = crypto.randomBytes(16).toString("hex");
+      const otp = String(Math.floor(100000 + Math.random() * 900000));
+      const otpHash = await bcrypt.hash(otp, 10);
+      const expiresAt = new Date(Date.now() + ms);
+
+      // Ensure share_tokens table exists
+      await dbPool.query(
+        `CREATE TABLE IF NOT EXISTS \`${env.mysqlDatabase}\`.share_tokens (
+           id              VARCHAR(36)   NOT NULL,
+           token           VARCHAR(64)   NOT NULL,
+           organization_id VARCHAR(36)   NOT NULL,
+           document_id     VARCHAR(36)   NOT NULL,
+           document_name   VARCHAR(512)  NOT NULL,
+           file_path       VARCHAR(1024) NOT NULL,
+           file_type       VARCHAR(50)   NOT NULL DEFAULT 'FILE',
+           recipient_emails JSON         NOT NULL,
+           expires_at      DATETIME      NOT NULL,
+           otp_hash        VARCHAR(255)  NOT NULL,
+           verified        TINYINT(1)    NOT NULL DEFAULT 0,
+           created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+           PRIMARY KEY (id),
+           UNIQUE KEY uq_sht_token (token),
+           KEY idx_sht_doc (document_id),
+           KEY idx_sht_org (organization_id),
+           KEY idx_sht_expires (expires_at)
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      );
+
+      const shareId = crypto.randomUUID();
+      await dbPool.query(
+        `INSERT INTO \`${env.mysqlDatabase}\`.share_tokens
+           (id, token, organization_id, document_id, document_name, file_path, file_type, recipient_emails, expires_at, otp_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [shareId, token, user.organizationId, docId, doc.name, doc.file_path ?? "", doc.file_type, JSON.stringify(emails), expiresAt, otpHash],
+      );
+
+      const shareLink = `${env.frontendBaseUrl}/share/${token}`;
+
+      const [orgRows] = await dbPool.query(
+        `SELECT name FROM \`${env.mysqlDatabase}\`.organizations WHERE id = ? LIMIT 1`,
+        [user.organizationId],
+      );
+      const orgName = (orgRows as Array<{ name: string }>)[0]?.name ?? "";
+
+      for (const email of emails) {
+        void emailService.sendShareLinkEmail({
+          to: email,
+          documentName: doc.name,
+          shareLink,
+          otp,
+          expiresIn: label,
+          sharedByName: user.fullName,
+          orgName,
+        });
+      }
+
+      void notifyOrgAdmin(user.organizationId, "document_shared", {
+        actorName: user.fullName,
+        actorEmail: user.email,
+        fileName: doc.name,
+      });
+
+      void recordOrgActivity(user.id, user.organizationId, {
+        action: "Document Shared",
+        module: "Documents",
+        description: `Shared "${doc.name}" with ${emails.length} recipient(s).`,
+      });
+
+      return res.status(200).json({ token, shareLink, expiresAt: expiresAt.toISOString() });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to share document";
       return res.status(500).json({ message });
     }
   },

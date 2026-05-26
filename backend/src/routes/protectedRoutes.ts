@@ -45,6 +45,10 @@ protectedRoutes.get(
 protectedRoutes.get("/org-admin/documents/:id", requireAuth, requireRole("ORG_ADMIN"), protectedController.getOrgAdminDocument);
 protectedRoutes.patch("/org-admin/documents/:id/archive", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminDocumentArchiveStatus);
 protectedRoutes.patch("/org-admin/documents/:id/metadata", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminDocumentMetadata);
+protectedRoutes.post("/org-admin/documents/bulk-download", requireAuth, requireRole("ORG_ADMIN"), protectedController.bulkDownloadOrgAdminDocuments);
+protectedRoutes.get("/org-admin/documents/:id/versions", requireAuth, requireRole("ORG_ADMIN"), protectedController.listOrgAdminDocumentVersions);
+protectedRoutes.post("/org-admin/documents/:id/versions/:versionId/restore", requireAuth, requireRole("ORG_ADMIN"), protectedController.restoreOrgAdminDocumentVersion);
+protectedRoutes.post("/org-admin/documents/:id/share", requireAuth, requireRole("ORG_ADMIN"), protectedController.shareOrgAdminDocument);
 protectedRoutes.delete("/org-admin/documents/:id", requireAuth, requireRole("ORG_ADMIN"), protectedController.deleteOrgAdminDocument);
 protectedRoutes.get(
   "/org-admin/activity-logs",
