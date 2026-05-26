@@ -56,6 +56,7 @@ export default function OrgAdminLayout({ children }: OrgAdminLayoutProps) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsLoading, setNotificationsLoading] = useState(true);
   const [notificationsError, setNotificationsError] = useState('');
+  const [avatarDataUrl, setAvatarDataUrl] = useState('');
 
   const pathname = usePathname();
   const router = useRouter();
@@ -84,6 +85,28 @@ export default function OrgAdminLayout({ children }: OrgAdminLayoutProps) {
         // Keep static fallback labels.
       });
   }, [API_BASE_URL]);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/org-admin/settings/profile`, { credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = await res.json() as { avatarDataUrl?: string };
+        if (data.avatarDataUrl) setAvatarDataUrl(data.avatarDataUrl);
+      })
+      .catch(() => {});
+  }, [API_BASE_URL]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { avatarDataUrl: url, fullName } = (e as CustomEvent<{ avatarDataUrl: string; fullName: string }>).detail;
+      setAvatarDataUrl(url);
+      if (fullName) {
+        setSessionUser((prev) => prev ? { ...prev, fullName } : prev);
+      }
+    };
+    window.addEventListener('custodox-avatar-updated', handler);
+    return () => window.removeEventListener('custodox-avatar-updated', handler);
+  }, []);
 
   const loadNotifications = useCallback(async () => {
     setNotificationsLoading(true);
@@ -337,8 +360,13 @@ export default function OrgAdminLayout({ children }: OrgAdminLayoutProps) {
               onClick={() => { setShowUserMenu(!showUserMenu); setShowNotifs(false); }}
               className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 transition-all"
             >
-              <div className="w-7 h-7 rounded-full bg-[#0097B2] flex items-center justify-center">
-                <span className="text-white text-xs font-bold">{initials}</span>
+              <div className="w-7 h-7 rounded-full bg-[#0097B2] overflow-hidden flex items-center justify-center flex-shrink-0">
+                {avatarDataUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={avatarDataUrl} alt={displayName} className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-white text-xs font-bold">{initials}</span>
+                )}
               </div>
               <span className="text-sm font-medium text-brand-navy hidden md:block">{displayName}</span>
               <i className="ri-arrow-down-s-line text-gray-400 text-sm" />

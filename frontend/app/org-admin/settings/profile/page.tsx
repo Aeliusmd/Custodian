@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { settingsApi } from '@/app/org-admin/settings/lib/api';
 import type { PasswordPayload, ToastType, UserProfile } from '@/app/org-admin/settings/lib/types';
 
@@ -20,6 +20,8 @@ export default function AdminProfilePage() {
   const [phone, setPhone] = useState('');
   const [language, setLanguage] = useState('English');
   const [bio, setBio] = useState('');
+  const [avatarDataUrl, setAvatarDataUrl] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
@@ -48,6 +50,7 @@ export default function AdminProfilePage() {
         setPhone(profile.phone);
         setLanguage(profile.language);
         setBio(profile.bio);
+        setAvatarDataUrl(profile.avatarDataUrl ?? '');
       } catch {
         showToast('Failed to load profile. Please refresh.', 'error');
       } finally {
@@ -62,6 +65,22 @@ export default function AdminProfilePage() {
     const id = Date.now();
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3500);
+  };
+
+  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      showToast('Image must be under 2 MB', 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setAvatarDataUrl(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+    // reset so the same file can be re-selected if needed
+    e.target.value = '';
   };
 
   const handleProfileSave = async () => {
@@ -86,9 +105,15 @@ export default function AdminProfilePage() {
         language,
         role: initialProfile.role,
         bio: bio.trim(),
+        avatarDataUrl,
       };
       const updated = await settingsApi.updateProfile(payload);
       setInitialProfile(updated);
+      setAvatarDataUrl(updated.avatarDataUrl ?? '');
+      // Notify the layout so it updates the header avatar immediately
+      window.dispatchEvent(new CustomEvent('custodox-avatar-updated', {
+        detail: { avatarDataUrl: updated.avatarDataUrl ?? '', fullName: `${updated.firstName} ${updated.lastName}`.trim() },
+      }));
       showToast('Profile updated successfully');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to save profile', 'error');
@@ -108,6 +133,7 @@ export default function AdminProfilePage() {
     setPhone(initialProfile.phone);
     setLanguage(initialProfile.language);
     setBio(initialProfile.bio);
+    setAvatarDataUrl(initialProfile.avatarDataUrl ?? '');
     setProfileErrors({});
   };
 
@@ -200,11 +226,23 @@ export default function AdminProfilePage() {
       <div className="max-w-3xl space-y-6">
         {/* Avatar card */}
         <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-6 flex items-center gap-4 sm:gap-5">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleAvatarFileChange}
+          />
           <div
-            className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0"
-            style={{ background: TEAL }}
+            className="w-16 h-16 rounded-full flex-shrink-0 overflow-hidden flex items-center justify-center text-white font-bold text-xl"
+            style={{ background: avatarDataUrl ? 'transparent' : TEAL }}
           >
-            {initials}
+            {avatarDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={avatarDataUrl} alt="Avatar" className="w-full h-full object-cover" />
+            ) : (
+              initials
+            )}
           </div>
           <div>
             <p className="text-base font-bold text-[#1a2340]">
@@ -213,7 +251,11 @@ export default function AdminProfilePage() {
             <p className="text-sm mt-0.5" style={{ color: TEAL }}>
               {displayRole(initialProfile?.role)}
             </p>
-            <button className="text-sm font-semibold mt-1 cursor-pointer hover:underline" style={{ color: TEAL }}>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="text-sm font-semibold mt-1 cursor-pointer hover:underline"
+              style={{ color: TEAL }}
+            >
               Change Avatar
             </button>
           </div>

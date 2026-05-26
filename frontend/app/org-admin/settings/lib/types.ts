@@ -8,6 +8,7 @@ export interface UserProfile {
   language: string;
   role: string;
   bio: string;
+  avatarDataUrl?: string;
 }
 
 export interface PasswordPayload {
