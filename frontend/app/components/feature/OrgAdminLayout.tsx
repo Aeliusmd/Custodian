@@ -3,7 +3,8 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useState } from 'react';
+import { AppNotification, notificationsApi } from '@/app/lib/notificationsApi';
 
 const navItems = [
   { path: '/org-admin/dashboard', label: 'Dashboard', icon: 'ri-dashboard-line' },
@@ -26,31 +27,41 @@ const pageMeta: Record<string, { title: string; icon: string }> = {
   '/org-admin/settings/profile': { title: 'Admin Profile', icon: 'ri-user-settings-line' },
 };
 
-const notifications = [
-  { id: 1, text: '12 new documents uploaded today', time: '5 min ago', unread: true },
-  { id: 2, text: 'Storage usage at 82% — consider upgrading', time: '1 hr ago', unread: true },
-  { id: 3, text: 'User James Whitfield added to Legal team', time: '3 hr ago', unread: false },
-];
+const formatNotificationTime = (createdAt: string): string => {
+  const created = new Date(createdAt).getTime();
+  if (!Number.isFinite(created)) return '';
+  const diffMinutes = Math.max(0, Math.floor((Date.now() - created) / 60000));
+  if (diffMinutes < 1) return 'Just now';
+  if (diffMinutes < 60) return `${diffMinutes} min ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} hr ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+  return new Date(createdAt).toLocaleDateString();
+};
 
 type OrgAdminLayoutProps = {
   children: ReactNode;
 };
 
 export default function OrgAdminLayout({ children }: OrgAdminLayoutProps) {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
   const [sessionUser, setSessionUser] = useState<{ fullName: string; email: string; role: string } | null>(null);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
+  const [notificationsError, setNotificationsError] = useState('');
 
   const pathname = usePathname();
   const router = useRouter();
 
   const isSettingsActive = pathname.startsWith('/org-admin/settings');
   const current = pageMeta[pathname] ?? { title: 'Organization Admin', icon: 'ri-building-2-line' };
-  const unreadCount = notifications.filter((n) => n.unread).length;
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/auth/session`, {
@@ -73,6 +84,27 @@ export default function OrgAdminLayout({ children }: OrgAdminLayoutProps) {
         // Keep static fallback labels.
       });
   }, [API_BASE_URL]);
+
+  const loadNotifications = useCallback(async () => {
+    setNotificationsLoading(true);
+    setNotificationsError('');
+    try {
+      const [items, count] = await Promise.all([
+        notificationsApi.list(10),
+        notificationsApi.unreadCount(),
+      ]);
+      setNotifications(items);
+      setUnreadCount(count);
+    } catch {
+      setNotificationsError('Unable to load notifications.');
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadNotifications();
+  }, [loadNotifications]);
 
   const displayName = sessionUser?.fullName?.trim() || 'Organization Admin';
   const displayRole = sessionUser?.role === 'ORG_ADMIN' ? 'Organization Admin' : (sessionUser?.role ?? 'Organization Admin');
@@ -108,6 +140,35 @@ export default function OrgAdminLayout({ children }: OrgAdminLayoutProps) {
     setMobileNavOpen(false);
     setShowNotifs(false);
     setShowUserMenu(false);
+  };
+
+  const handleNotificationClick = async (notification: AppNotification) => {
+    if (!notification.readAt) {
+      setNotifications((prev) =>
+        prev.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item),
+      );
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+      try {
+        await notificationsApi.markRead(notification.id);
+      } catch {
+        void loadNotifications();
+      }
+    }
+
+    if (notification.actionUrl) {
+      setShowNotifs(false);
+      router.push(notification.actionUrl);
+    }
+  };
+
+  const handleMarkAllRead = async () => {
+    setNotifications((prev) => prev.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
+    setUnreadCount(0);
+    try {
+      await notificationsApi.markAllRead();
+    } catch {
+      void loadNotifications();
+    }
   };
 
   return (
@@ -216,7 +277,12 @@ export default function OrgAdminLayout({ children }: OrgAdminLayoutProps) {
 
           <div className="relative">
             <button
-              onClick={() => { setShowNotifs(!showNotifs); setShowUserMenu(false); }}
+              onClick={() => {
+                const nextOpen = !showNotifs;
+                setShowNotifs(nextOpen);
+                setShowUserMenu(false);
+                if (nextOpen) void loadNotifications();
+              }}
               className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-brand-navy hover:bg-gray-100 transition-all relative"
             >
               <i className="ri-notification-3-line text-lg" />
@@ -228,12 +294,39 @@ export default function OrgAdminLayout({ children }: OrgAdminLayoutProps) {
               <div className="absolute right-0 top-10 w-80 bg-white border border-gray-200 rounded-xl overflow-hidden z-50">
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
                   <span className="font-semibold text-brand-navy text-sm">Notifications</span>
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={() => void handleMarkAllRead()}
+                      className="text-xs text-[#0097B2] hover:underline"
+                    >
+                      Mark all read
+                    </button>
+                  )}
                 </div>
-                {notifications.map((n) => (
-                  <div key={n.id} className={`px-4 py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 cursor-pointer ${n.unread ? 'bg-[#0097B2]/5' : ''}`}>
-                    <p className="text-sm text-brand-navy">{n.text}</p>
-                    <p className="text-xs text-gray-400 mt-1">{n.time}</p>
-                  </div>
+                {notificationsLoading && (
+                  <div className="px-4 py-5 text-sm text-gray-400">Loading notifications...</div>
+                )}
+                {!notificationsLoading && notificationsError && (
+                  <div className="px-4 py-5 text-sm text-red-500">{notificationsError}</div>
+                )}
+                {!notificationsLoading && !notificationsError && notifications.length === 0 && (
+                  <div className="px-4 py-5 text-sm text-gray-400">No notifications yet.</div>
+                )}
+                {!notificationsLoading && !notificationsError && notifications.map((n) => (
+                  <button
+                    key={n.id}
+                    onClick={() => void handleNotificationClick(n)}
+                    className={`w-full text-left px-4 py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 cursor-pointer ${!n.readAt ? 'bg-[#0097B2]/5' : ''}`}
+                  >
+                    <div className="flex items-start gap-2">
+                      {!n.readAt && <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#0097B2] flex-shrink-0" />}
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-brand-navy">{n.title}</p>
+                        <p className="text-sm text-gray-600 mt-0.5 line-clamp-2">{n.message}</p>
+                        <p className="text-xs text-gray-400 mt-1">{formatNotificationTime(n.createdAt)}</p>
+                      </div>
+                    </div>
+                  </button>
                 ))}
               </div>
             )}

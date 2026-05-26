@@ -1,20 +1,31 @@
 "use client";
 
-import { useState, type ReactElement } from 'react';
-import { MOCK_DOCUMENTS, MOCK_CATEGORIES, MOCK_UPLOADERS, type DocumentRecord } from '@/mocks/documents';
+import { useState, useEffect, useCallback, type ReactElement } from 'react';
+import DocumentViewerModal from '@/app/components/feature/DocumentViewerModal';
+import { type DocumentRecord } from '@/mocks/documents';
+import { downloadOrgAdminDocumentFile } from '@/app/org-admin/documents/lib/documentFileDownload';
 
 const TEAL = '#0097B2';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 
-const DYNAMIC_METADATA_FIELDS: Record<string, string[]> = {
-  'Financial Reports': ['Author', 'Report Year', 'Department', 'Approval Status'],
-  'HR Documents': ['Author', 'Version', 'Department', 'Effective Date'],
-  'Legal': ['Author', 'NIC', 'Quarter', 'Audit Firm'],
-  'Strategy': ['Author', 'Year', 'Product Team', 'Confidentiality'],
-  'Contracts': ['Author', 'Document Type', 'Version', 'Valid From'],
-  'IT & Security': ['Author', 'NIC', 'Policy Year', 'Department', 'Review Date'],
-  'Governance': ['Author', 'Meeting Date', 'Meeting Type', 'Attendees'],
-  'Marketing': ['Author', 'Quarter', 'Budget', 'Campaign Theme'],
-};
+interface CategoryField {
+  id: string;
+  name: string;
+  type: string;
+  required: boolean;
+  options?: string[];
+}
+
+interface Category {
+  id: string;
+  name: string;
+  fields: CategoryField[];
+}
+
+interface OrgUser {
+  id: string;
+  name: string;
+}
 
 interface SearchFilters {
   docName: string;
@@ -35,44 +46,98 @@ function highlightText(text: string, keyword: string): ReactElement {
           <mark key={index} className="bg-yellow-200 text-yellow-900 font-semibold rounded px-0.5">{part}</mark>
         ) : (
           <span key={index}>{part}</span>
-        )
+        ),
       )}
     </>
   );
 }
 
 export default function AdvancedSearchPage() {
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [uploaders, setUploaders] = useState<OrgUser[]>([]);
+  const [loadingFilters, setLoadingFilters] = useState(true);
   const [filters, setFilters] = useState<SearchFilters>({
     docName: '', category: '', uploadedBy: '', dateFrom: '', dateTo: '', metadata: {},
   });
   const [results, setResults] = useState<DocumentRecord[] | null>(null);
   const [searched, setSearched] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [expandedFilters, setExpandedFilters] = useState(true);
+  const [viewerDoc, setViewerDoc] = useState<DocumentRecord | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-  const metaFields = filters.category ? (DYNAMIC_METADATA_FIELDS[filters.category] ?? []) : [];
+  const showActionMessage = (text: string, type: 'success' | 'error' = 'success') => {
+    setActionMessage({ text, type });
+    window.setTimeout(() => setActionMessage(null), 3000);
+  };
 
-  const handleSearch = () => {
-    const found = MOCK_DOCUMENTS.filter((d) => {
-      if (filters.docName && !d.name.toLowerCase().includes(filters.docName.toLowerCase())) return false;
-      if (filters.category && d.category !== filters.category) return false;
-      if (filters.uploadedBy && d.uploadedBy !== filters.uploadedBy) return false;
-      if (filters.dateFrom && d.uploadDate < filters.dateFrom) return false;
-      if (filters.dateTo && d.uploadDate > filters.dateTo) return false;
-      for (const [key, val] of Object.entries(filters.metadata)) {
-        if (val && d.metadata[key] && !d.metadata[key].toLowerCase().includes(val.toLowerCase())) return false;
+  const loadFilterData = useCallback(async () => {
+    try {
+      setLoadingFilters(true);
+      const [catsRes, usersRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/protected/org-admin/categories`, { credentials: 'include' }),
+        fetch(`${API_BASE_URL}/protected/org-admin/users`, { credentials: 'include' }),
+      ]);
+      if (catsRes.ok) setCategories((await catsRes.json()) as Category[]);
+      if (usersRes.ok) {
+        const users = (await usersRes.json()) as OrgUser[];
+        setUploaders(users.filter((u) => u.name));
       }
-      return true;
-    });
-    setResults(found);
-    setSearched(true);
-    setExpandedFilters(false);
+    } catch {
+      // filters remain empty
+    } finally {
+      setLoadingFilters(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadFilterData();
+  }, [loadFilterData]);
+
+  const selectedCat = categories.find((c) => c.name === filters.category);
+  const metaFields = selectedCat?.fields ?? [];
+
+  const handleSearch = async () => {
+    setSearching(true);
+    setSearchError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/protected/org-admin/advanced-search`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          docName: filters.docName,
+          category: filters.category,
+          uploadedBy: filters.uploadedBy,
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo,
+          metadata: filters.metadata,
+        }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { message?: string };
+        throw new Error(body.message ?? `Search failed (${response.status})`);
+      }
+      const data = (await response.json()) as { results?: DocumentRecord[] };
+      setResults(data.results ?? []);
+      setSearched(true);
+      setExpandedFilters(false);
+    } catch (e) {
+      setSearchError(e instanceof Error ? e.message : 'Search failed');
+      setResults([]);
+      setSearched(true);
+    } finally {
+      setSearching(false);
+    }
   };
 
   const handleReset = () => {
     setFilters({ docName: '', category: '', uploadedBy: '', dateFrom: '', dateTo: '', metadata: {} });
     setResults(null);
     setSearched(false);
+    setSearchError('');
     setExpandedFilters(true);
   };
 
@@ -80,14 +145,52 @@ export default function AdvancedSearchPage() {
     setFilters((prev) => ({ ...prev, metadata: { ...prev.metadata, [key]: value } }));
   };
 
+  const openViewer = async (doc: DocumentRecord) => {
+    setActiveMenu(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(doc.id)}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        setViewerDoc(doc);
+        showActionMessage(`Could not refresh document details (${response.status}).`, 'error');
+        return;
+      }
+      setViewerDoc((await response.json()) as DocumentRecord);
+    } catch {
+      setViewerDoc(doc);
+      showActionMessage('Could not reach the server. Showing list data.', 'error');
+    }
+  };
+
+  const handleDownload = async (doc: DocumentRecord) => {
+    setActiveMenu(null);
+    await downloadOrgAdminDocumentFile(API_BASE_URL, doc, (message, type) =>
+      showActionMessage(message, type ?? 'success'),
+    );
+  };
+
+  const previewImageUrlForPage = (pageOneBased: number) => {
+    if (!viewerDoc?.id) return '';
+    return `${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(viewerDoc.id)}/preview/${pageOneBased}`;
+  };
+
   const activeFilterCount = [
-    filters.docName, filters.category, filters.uploadedBy, filters.dateFrom,
+    filters.docName,
+    filters.category,
+    filters.uploadedBy,
+    filters.dateFrom,
+    filters.dateTo,
     ...Object.values(filters.metadata).filter(Boolean),
   ].filter(Boolean).length;
 
+  const highlightKeyword = filters.docName;
+
   return (
-    <div className="px-4 py-5 sm:p-6 min-h-full font-inter" onClick={() => setActiveMenu(null)}>
-      {/* Header */}
+    <div onClick={() => setActiveMenu(null)}>
+      <div className="px-4 py-5 sm:p-6 min-h-full font-inter">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
         <div className="min-w-0">
           <h1 className="text-xl font-bold text-[#1a2340]">Advanced Search</h1>
@@ -95,6 +198,7 @@ export default function AdvancedSearchPage() {
         </div>
         {searched && (
           <button
+            type="button"
             onClick={() => setExpandedFilters(!expandedFilters)}
             aria-label={expandedFilters ? 'Hide filters' : 'Show filters'}
             title={expandedFilters ? 'Hide filters' : 'Show filters'}
@@ -111,27 +215,44 @@ export default function AdvancedSearchPage() {
         )}
       </div>
 
-      {/* Filter Panel */}
+      {actionMessage && (
+        <div
+          className={`mb-4 rounded-lg border px-4 py-3 text-sm ${
+            actionMessage.type === 'error'
+              ? 'border-red-200 bg-red-50 text-red-600'
+              : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          }`}
+        >
+          {actionMessage.text}
+        </div>
+      )}
+
+      {searchError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {searchError}
+        </div>
+      )}
+
       {expandedFilters && (
         <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-6 mb-6">
           <h3 className="text-sm font-bold text-[#1a2340] mb-4 flex items-center gap-2">
             <i className="ri-filter-3-line" style={{ color: TEAL }} />
             Search Filters
+            {loadingFilters && <span className="text-xs text-gray-400 font-normal ml-1">(loading options…)</span>}
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            {/* Document Name */}
             <div>
               <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Document Name</label>
               <input
                 value={filters.docName}
                 onChange={(e) => setFilters((prev) => ({ ...prev, docName: e.target.value }))}
+                onKeyDown={(e) => e.key === 'Enter' && void handleSearch()}
                 placeholder="Enter document name..."
                 className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-[#1a2340] outline-none focus:border-[#0097B2] transition-all"
               />
             </div>
 
-            {/* Category */}
             <div>
               <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Category</label>
               <select
@@ -142,11 +263,12 @@ export default function AdvancedSearchPage() {
                 className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-gray-600 outline-none focus:border-[#0097B2] bg-white cursor-pointer transition-all"
               >
                 <option value="">All Categories</option>
-                {MOCK_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                {categories.map((c) => (
+                  <option key={c.id} value={c.name}>{c.name}</option>
+                ))}
               </select>
             </div>
 
-            {/* Uploaded By */}
             <div>
               <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Uploaded By</label>
               <select
@@ -157,11 +279,12 @@ export default function AdvancedSearchPage() {
                 className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-gray-600 outline-none focus:border-[#0097B2] bg-white cursor-pointer transition-all"
               >
                 <option value="">Any Uploader</option>
-                {MOCK_UPLOADERS.map((u) => <option key={u} value={u}>{u}</option>)}
+                {uploaders.map((u) => (
+                  <option key={u.id} value={u.name}>{u.name}</option>
+                ))}
               </select>
             </div>
 
-            {/* Date Range */}
             <div>
               <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Date Range</label>
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-2 sm:items-center">
@@ -182,7 +305,6 @@ export default function AdvancedSearchPage() {
             </div>
           </div>
 
-          {/* Dynamic Metadata Fields */}
           {metaFields.length > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-3">
@@ -195,12 +317,13 @@ export default function AdvancedSearchPage() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {metaFields.map((field) => (
-                  <div key={field}>
-                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">{field}</label>
+                  <div key={field.id}>
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">{field.name}</label>
                     <input
-                      value={filters.metadata[field] ?? ''}
-                      onChange={(e) => setMeta(field, e.target.value)}
-                      placeholder={`Filter by ${field}...`}
+                      value={filters.metadata[field.id] ?? ''}
+                      onChange={(e) => setMeta(field.id, e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && void handleSearch()}
+                      placeholder={`Filter by ${field.name}...`}
                       className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-[#1a2340] outline-none focus:border-[#0097B2] transition-all"
                     />
                   </div>
@@ -209,7 +332,6 @@ export default function AdvancedSearchPage() {
             </div>
           )}
 
-          {/* Actions */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between mt-6 pt-4 border-t border-gray-100 gap-3">
             <button
               onClick={handleReset}
@@ -220,19 +342,19 @@ export default function AdvancedSearchPage() {
               Reset All
             </button>
             <button
-              onClick={handleSearch}
+              onClick={() => void handleSearch()}
               type="button"
-              className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
+              disabled={searching || loadingFilters}
+              className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap disabled:opacity-60"
               style={{ background: TEAL }}
             >
-              <i className="ri-search-line" />
-              Search Documents
+              <i className={`ri-search-line ${searching ? 'animate-pulse' : ''}`} />
+              {searching ? 'Searching…' : 'Search Documents'}
             </button>
           </div>
         </div>
       )}
 
-      {/* Results */}
       {searched && results !== null && (
         <div>
           <div className="flex items-center justify-between mb-3">
@@ -277,13 +399,17 @@ export default function AdvancedSearchPage() {
                               <i className="ri-file-pdf-2-line text-sm" style={{ color: TEAL }} />
                             </div>
                             <div className="min-w-0">
-                              <div className="text-sm font-medium text-[#1a2340] truncate max-w-[220px]">{doc.name}</div>
+                              <div className="text-sm font-medium text-[#1a2340] truncate max-w-[220px]">
+                                {highlightText(doc.name, highlightKeyword)}
+                              </div>
                               <div className="text-xs text-gray-400">{doc.fileSize} · {doc.fileType}</div>
                             </div>
                           </div>
                         </td>
                         <td className="px-5 py-4">
-                          <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">{doc.category}</span>
+                          <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
+                            {highlightText(doc.category, highlightKeyword)}
+                          </span>
                         </td>
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-2">
@@ -303,6 +429,7 @@ export default function AdvancedSearchPage() {
                         <td className="px-5 py-4">
                           <div className="relative" onClick={(e) => e.stopPropagation()}>
                             <button
+                              type="button"
                               onClick={() => setActiveMenu(activeMenu === doc.id ? null : doc.id)}
                               aria-label={`Open actions for ${doc.name}`}
                               title={`Open actions for ${doc.name}`}
@@ -312,17 +439,21 @@ export default function AdvancedSearchPage() {
                             </button>
                             {activeMenu === doc.id && (
                               <div className="absolute right-0 top-10 w-48 bg-white border border-gray-200 rounded-xl overflow-hidden z-40 py-1.5">
-                                <button type="button" className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer">
+                                <button
+                                  type="button"
+                                  onClick={() => void openViewer(doc)}
+                                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer"
+                                >
                                   <i className="ri-eye-line text-sm" />
                                   <span>View Document</span>
                                 </button>
-                                <button type="button" className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDownload(doc)}
+                                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer"
+                                >
                                   <i className="ri-download-2-line text-sm" />
                                   <span>Download PDF</span>
-                                </button>
-                                <button type="button" className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer">
-                                  <i className="ri-share-forward-line text-sm" />
-                                  <span>Share</span>
                                 </button>
                               </div>
                             )}
@@ -340,6 +471,18 @@ export default function AdvancedSearchPage() {
           )}
         </div>
       )}
+
+      {viewerDoc && (
+        <DocumentViewerModal
+          key={`${viewerDoc.id}-${viewerDoc.previewPageCount ?? 0}`}
+          doc={viewerDoc}
+          fileDownloadUrl={`${API_BASE_URL}/protected/org-admin/documents/${encodeURIComponent(viewerDoc.id)}/file`}
+          previewImageUrlForPage={previewImageUrlForPage}
+          onNotify={(message, type) => showActionMessage(message, type)}
+          onClose={() => setViewerDoc(null)}
+        />
+      )}
+      </div>
     </div>
   );
 }

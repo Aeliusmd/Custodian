@@ -31,6 +31,27 @@ const recordOrgActivity = async (
   }
 };
 
+const notifyStorageThresholdIfNeeded = (
+  organizationId: string,
+  storageUsedGb: number,
+  storageTotalGb: number,
+  storagePercent: number,
+) => {
+  const threshold = storagePercent >= 95 ? 95 : storagePercent >= 80 ? 80 : 0;
+  if (threshold === 0) return;
+
+  void notifyOrgAdmin(organizationId, "system_alerts", {
+    storageUsedGb,
+    storageTotalGb,
+    storagePercent,
+    storageThreshold: threshold,
+    actionUrl: "/org-admin/dashboard",
+    entityType: "organization",
+    entityId: organizationId,
+    dedupeKey: `storage-${threshold}`,
+  });
+};
+
 const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
 
@@ -629,6 +650,7 @@ export const protectedController = {
       const storageUsed = Number(org.storage_used_gb ?? 0);
       const storageTotal = Math.max(1, Number(org.storage_limit_gb ?? 10));
       const storagePct = Math.min(100, Math.round((storageUsed / storageTotal) * 100));
+      notifyStorageThresholdIfNeeded(org.id, storageUsed, storageTotal, storagePct);
 
       return res.status(200).json({
         organizationName: org.name,
@@ -2144,6 +2166,7 @@ export const protectedController = {
       const storageUsed = Number(org.storage_used_gb ?? 0);
       const storageTotal = Math.max(1, Number(org.storage_limit_gb ?? 10));
       const storagePct = Math.min(100, Math.round((storageUsed / storageTotal) * 100));
+      notifyStorageThresholdIfNeeded(org.id, storageUsed, storageTotal, storagePct);
       const thisWeekCount = uploadActivity.reduce((s, d) => s + d.count, 0);
 
       return res.status(200).json({

@@ -1,5 +1,6 @@
 import { dbPool } from "../config/db";
 import { env } from "../config/env";
+import { notificationModel } from "../models/notificationModel";
 import { emailService } from "./emailService";
 
 /**
@@ -29,6 +30,18 @@ export interface NotificationPayload {
   loginTime?: string | undefined;
   /** Organisation name — filled automatically from DB; safe to pass "" or omit. */
   orgName?: string | undefined;
+  actionUrl?: string | undefined;
+  entityType?: string | undefined;
+  entityId?: string | undefined;
+  actorUserId?: string | undefined;
+  storageUsedGb?: number | undefined;
+  storageTotalGb?: number | undefined;
+  storagePercent?: number | undefined;
+  storageThreshold?: number | undefined;
+  totalDocuments?: number | undefined;
+  uploadsThisWeek?: number | undefined;
+  activeUsers?: number | undefined;
+  dedupeKey?: string | undefined;
 }
 
 /**
@@ -50,6 +63,70 @@ async function resolveOrgMeta(
   const row = (rows as Array<{ db_name: string; name: string }>)[0];
   if (!row) return null;
   return { dbName: row.db_name, orgName: row.name };
+}
+
+function buildInboxContent(
+  notificationType: string,
+  payload: NotificationPayload,
+  orgName: string,
+): { title: string; message: string; severity: "info" | "success" | "warning" | "error" } | null {
+  const actor = payload.actorName || payload.actorEmail || "A user";
+
+  switch (notificationType) {
+    case "document_uploads":
+      return {
+        title: "Document uploaded",
+        message: `${actor} uploaded ${payload.fileName ?? "a document"}${payload.categoryName ? ` to ${payload.categoryName}` : ""}.`,
+        severity: "success",
+      };
+
+    case "document_shared":
+      return {
+        title: "Document shared",
+        message: `${actor} shared ${payload.fileName ?? "a document"}.`,
+        severity: "info",
+      };
+
+    case "team_updates":
+      return {
+        title: "Team updated",
+        message: `${actor} ${payload.actionType ?? "updated"} ${payload.userName ?? payload.userEmail ?? "a user"}.`,
+        severity: "info",
+      };
+
+    case "version_notifications":
+      return {
+        title: "Document version updated",
+        message: `${actor} updated ${payload.fileName ?? "a document version"}.`,
+        severity: "info",
+      };
+
+    case "login_notifications":
+      return {
+        title: "Login alert",
+        message: `${payload.userName ?? payload.userEmail ?? "A user"} signed in${payload.loginTime ? ` at ${payload.loginTime}` : ""}.`,
+        severity: "warning",
+      };
+
+    case "system_alerts": {
+      const percent = Math.round(Number(payload.storagePercent ?? 0));
+      return {
+        title: percent >= 95 ? "Storage critical" : "Storage warning",
+        message: `${orgName || "Your organization"} has used ${percent}% of its storage allocation.`,
+        severity: percent >= 95 ? "error" : "warning",
+      };
+    }
+
+    case "weekly_reports":
+      return {
+        title: "Weekly summary ready",
+        message: `${orgName || "Your organization"} had ${payload.uploadsThisWeek ?? 0} upload(s), ${payload.totalDocuments ?? 0} total document(s), and ${payload.activeUsers ?? 0} active user(s) this week.`,
+        severity: "info",
+      };
+
+    default:
+      return null;
+  }
 }
 
 /**
@@ -82,7 +159,7 @@ export async function notifyOrgAdmin(
     //    LEFT JOIN so admins with no settings rows yet (never visited settings page)
     //    are treated as opted-in by default (ns.id IS NULL → no explicit opt-out).
     const [adminRows] = await dbPool.query(
-      `SELECT u.email, u.name
+      `SELECT u.id, u.email, u.name
          FROM \`${dbName}\`.users AS u
          LEFT JOIN \`${dbName}\`.notification_settings AS ns
            ON ns.user_id = u.id AND ns.id = ?
@@ -92,14 +169,52 @@ export async function notifyOrgAdmin(
       [notificationType],
     );
 
-    const admins = adminRows as Array<{ email: string; name: string }>;
+    const admins = adminRows as Array<{ id: string; email: string; name: string }>;
     if (admins.length === 0) return;
 
-    // 3. Send an email to each eligible admin.
-    for (const admin of admins) {
-      // Skip self-notifications (admin acting on their own behalf).
-      if (admin.email === payload.actorEmail) continue;
+    const recipients = admins.filter((admin) => admin.email !== payload.actorEmail);
+    const inboxContent = buildInboxContent(notificationType, payload, orgName);
+    if (inboxContent && recipients.length > 0) {
+      try {
+        await notificationModel.createManyInTenant(
+          dbName,
+          recipients.map((admin) => ({
+            recipientUserId: admin.id,
+            type: notificationType,
+            title: inboxContent.title,
+            message: inboxContent.message,
+            severity: inboxContent.severity,
+            actionUrl: payload.actionUrl ?? null,
+            entityType: payload.entityType ?? null,
+            entityId: payload.entityId ?? null,
+            actorUserId: payload.actorUserId ?? null,
+            metadata: {
+              actorName: payload.actorName,
+              actorEmail: payload.actorEmail,
+              fileName: payload.fileName,
+              categoryName: payload.categoryName,
+              actionType: payload.actionType,
+              userName: payload.userName,
+              userEmail: payload.userEmail,
+              loginTime: payload.loginTime,
+              storageUsedGb: payload.storageUsedGb,
+              storageTotalGb: payload.storageTotalGb,
+              storagePercent: payload.storagePercent,
+              storageThreshold: payload.storageThreshold,
+              totalDocuments: payload.totalDocuments,
+              uploadsThisWeek: payload.uploadsThisWeek,
+              activeUsers: payload.activeUsers,
+            },
+            dedupeKey: payload.dedupeKey ?? null,
+          })),
+        );
+      } catch (error) {
+        console.error("[notifyOrgAdmin] Failed to create inbox notification:", error);
+      }
+    }
 
+    // 3. Send an email to each eligible admin.
+    for (const admin of recipients) {
       switch (notificationType) {
         case "document_uploads":
           await emailService.sendDocumentUploadNotification({
@@ -133,6 +248,34 @@ export async function notifyOrgAdmin(
             to: admin.email,
             adminName: admin.name,
             ...payload,
+            orgName,
+          });
+          break;
+
+        case "system_alerts":
+          if (
+            payload.storageUsedGb !== undefined &&
+            payload.storageTotalGb !== undefined &&
+            payload.storagePercent !== undefined
+          ) {
+            await emailService.sendStorageAlertNotification({
+              to: admin.email,
+              adminName: admin.name,
+              storageUsedGb: payload.storageUsedGb,
+              storageTotalGb: payload.storageTotalGb,
+              storagePercent: payload.storagePercent,
+              orgName,
+            });
+          }
+          break;
+
+        case "weekly_reports":
+          await emailService.sendWeeklyReportNotification({
+            to: admin.email,
+            adminName: admin.name,
+            totalDocuments: payload.totalDocuments ?? 0,
+            uploadsThisWeek: payload.uploadsThisWeek ?? 0,
+            activeUsers: payload.activeUsers ?? 0,
             orgName,
           });
           break;

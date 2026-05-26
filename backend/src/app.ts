@@ -6,6 +6,7 @@ import { requestLogger } from "./middlewares/requestLogger";
 import authRoutes from "./routes/authRoutes";
 import meRoute from "./routes/meRoute";
 import protectedRoutes from "./routes/protectedRoutes";
+import notificationRoutes from "./routes/notificationRoutes";
 import settingsRoutes from "./routes/settingsRoutes";
 import shareRoutes from "./routes/shareRoutes";
 import userSettingsRoutes from "./routes/userSettingsRoutes";
@@ -31,6 +32,7 @@ app.get("/health", (_req, res) => {
 app.use("/auth", authRoutes);
 app.use("/api/me", meRoute);
 app.use("/protected", protectedRoutes);
+app.use("/notifications", requireAuth, requireRole("USER", "ORG_ADMIN"), notificationRoutes);
 app.use("/share", shareRoutes);
 app.use("/org-admin/settings", requireAuth, requireRole("ORG_ADMIN"), settingsRoutes);
 app.use("/user/settings", requireAuth, requireRole("USER", "ORG_ADMIN"), userSettingsRoutes);
