@@ -21,9 +21,14 @@ export default function NotificationsPage() {
   useEffect(() => {
     const loadSettings = async () => {
       setIsLoading(true);
-      const savedSettings = await settingsApi.getNotificationSettings();
-      setSettings(savedSettings);
-      setIsLoading(false);
+      try {
+        const savedSettings = await settingsApi.getNotificationSettings();
+        setSettings(savedSettings);
+      } catch {
+        showToast('Failed to load notification settings');
+      } finally {
+        setIsLoading(false);
+      }
     };
 
     void loadSettings();
@@ -52,11 +57,16 @@ export default function NotificationsPage() {
 
   const handleSave = async () => {
     setIsSaving(true);
-    const updated = await settingsApi.updateNotificationSettings(settings);
-    setSettings(updated);
-    setHasChanges(false);
-    setIsSaving(false);
-    showToast('Notification preferences saved');
+    try {
+      const updated = await settingsApi.updateNotificationSettings(settings);
+      setSettings(updated);
+      setHasChanges(false);
+      showToast('Notification preferences saved');
+    } catch {
+      showToast('Failed to save preferences. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const categories = Array.from(new Set(settings.map((s) => s.category)));

@@ -39,16 +39,20 @@ export default function AdminProfilePage() {
   useEffect(() => {
     const loadProfile = async () => {
       setIsLoading(true);
-      const profile = await settingsApi.getProfile();
-
-      setInitialProfile(profile);
-      setFirstName(profile.firstName);
-      setLastName(profile.lastName);
-      setEmail(profile.email);
-      setPhone(profile.phone);
-      setLanguage(profile.language);
-      setBio(profile.bio);
-      setIsLoading(false);
+      try {
+        const profile = await settingsApi.getProfile();
+        setInitialProfile(profile);
+        setFirstName(profile.firstName);
+        setLastName(profile.lastName);
+        setEmail(profile.email);
+        setPhone(profile.phone);
+        setLanguage(profile.language);
+        setBio(profile.bio);
+      } catch {
+        showToast('Failed to load profile. Please refresh.', 'error');
+      } finally {
+        setIsLoading(false);
+      }
     };
 
     void loadProfile();
@@ -73,20 +77,24 @@ export default function AdminProfilePage() {
     }
 
     setIsSavingProfile(true);
-    const payload: UserProfile = {
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
-      email: email.trim(),
-      phone: phone.trim(),
-      language,
-      role: initialProfile.role,
-      bio: bio.trim(),
-    };
-
-    const updated = await settingsApi.updateProfile(payload);
-    setInitialProfile(updated);
-    setIsSavingProfile(false);
-    showToast('Profile updated successfully');
+    try {
+      const payload: UserProfile = {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        language,
+        role: initialProfile.role,
+        bio: bio.trim(),
+      };
+      const updated = await settingsApi.updateProfile(payload);
+      setInitialProfile(updated);
+      showToast('Profile updated successfully');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to save profile', 'error');
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   const handleCancel = () => {
@@ -117,18 +125,22 @@ export default function AdminProfilePage() {
     }
 
     setIsChangingPassword(true);
-    const payload: PasswordPayload = {
-      currentPassword: currentPass,
-      newPassword: newPass,
-      confirmPassword: confirmPass,
-    };
-
-    await settingsApi.changePassword(payload);
-    setCurrentPass('');
-    setNewPass('');
-    setConfirmPass('');
-    setIsChangingPassword(false);
-    showToast('Password changed successfully');
+    try {
+      const payload: PasswordPayload = {
+        currentPassword: currentPass,
+        newPassword: newPass,
+        confirmPassword: confirmPass,
+      };
+      await settingsApi.changePassword(payload);
+      setCurrentPass('');
+      setNewPass('');
+      setConfirmPass('');
+      showToast('Password changed successfully');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to change password', 'error');
+    } finally {
+      setIsChangingPassword(false);
+    }
   };
 
   const passwordStrength = useMemo(() => {
@@ -142,7 +154,15 @@ export default function AdminProfilePage() {
     return { label: 'Fair', color: 'bg-amber-400', width: 'w-2/4' };
   }, [newPass]);
 
-  const initials = `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase() || 'JW';
+  const initials = `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase() || '??';
+
+  const displayRole = (role: string | undefined) => {
+    if (!role) return 'Org Admin';
+    if (role === 'ORG_ADMIN') return 'Org Admin';
+    if (role === 'USER') return 'User';
+    if (role === 'SUPER_ADMIN') return 'Super Admin';
+    return role;
+  };
 
   if (isLoading) {
     return (
@@ -191,7 +211,7 @@ export default function AdminProfilePage() {
               {firstName} {lastName}
             </p>
             <p className="text-sm mt-0.5" style={{ color: TEAL }}>
-              {initialProfile?.role ?? 'Org Admin'}
+              {displayRole(initialProfile?.role)}
             </p>
             <button className="text-sm font-semibold mt-1 cursor-pointer hover:underline" style={{ color: TEAL }}>
               Change Avatar
@@ -280,7 +300,7 @@ export default function AdminProfilePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">Role</label>
                 <input
-                  value={initialProfile?.role ?? 'Org Admin'}
+                  value={displayRole(initialProfile?.role)}
                   readOnly
                   className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm text-gray-400 outline-none bg-gray-50 cursor-not-allowed"
                 />
