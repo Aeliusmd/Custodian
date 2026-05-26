@@ -102,6 +102,21 @@ export const settingsModel = {
   async getNotifications(userId: string, organizationId: string): Promise<NotificationSetting[]> {
     const tenantDb = await resolveTenantDbName(organizationId);
 
+    await dbPool.query(
+      `CREATE TABLE IF NOT EXISTS \`${tenantDb}\`.notification_settings (
+        id VARCHAR(60) NOT NULL,
+        user_id VARCHAR(36) NOT NULL,
+        label VARCHAR(120) NOT NULL,
+        description TEXT NULL,
+        icon VARCHAR(80) NOT NULL DEFAULT '',
+        enabled TINYINT(1) NOT NULL DEFAULT 1,
+        category VARCHAR(60) NOT NULL DEFAULT '',
+        sort_order INT NOT NULL DEFAULT 0,
+        PRIMARY KEY (id, user_id),
+        KEY idx_ns_user (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    );
+
     const [countRows] = await dbPool.query(
       `SELECT COUNT(*) AS cnt
          FROM \`${tenantDb}\`.notification_settings

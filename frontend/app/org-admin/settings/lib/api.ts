@@ -6,7 +6,7 @@ import type {
 } from '@/app/org-admin/settings/lib/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
-const BASE = `${API_BASE_URL}/protected/org-admin/settings`;
+const BASE = `${API_BASE_URL}/org-admin/settings`;
 
 const apiFetch = async <T>(
   endpoint: string,
@@ -59,14 +59,6 @@ export const settingsApi = {
   },
 
   async getActivityLogs(): Promise<ActivityLog[]> {
-    const res = await fetch(`${API_BASE_URL}/protected/org-admin/activity-logs`, {
-      method: 'GET',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      cache: 'no-store',
-    });
-    if (!res.ok) throw new Error(`Failed to fetch activity logs (${res.status})`);
-    const data = (await res.json()) as { logs?: ActivityLog[] };
-    return data.logs ?? [];
+    return apiFetch<ActivityLog[]>('/activity', { method: 'GET' });
   },
 };
