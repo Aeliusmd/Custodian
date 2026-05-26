@@ -32,6 +32,28 @@ export async function writeOcrOutputFile(
   return { relativePath, absolutePath };
 }
 
+export type OcrPageText = { page: number; text: string };
+
+export async function writeOcrPagesFile(
+  storageRoot: string,
+  documentId: string,
+  pages: OcrPageText[],
+): Promise<{ relativePath: string; absolutePath: string }> {
+  const relativePath = `uploads/ocr/${documentId}.pages.json`;
+  const absolutePath = absoluteFromStorageRoot(storageRoot, relativePath);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, JSON.stringify({ pages }), "utf8");
+  return { relativePath, absolutePath };
+}
+
+export const splitFlatOcrTextIntoPages = (text: string): OcrPageText[] => {
+  const t = text.replace(/\r\n/g, "\n").trim();
+  if (!t) return [];
+  const parts = t.split(/\n\n+/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return [];
+  return parts.map((part, i) => ({ page: i + 1, text: part }));
+};
+
 /** Relative path for a rendered preview page PNG (1-based page index). */
 export const previewPageRelativePath = (documentId: string, pageOneBased: number): string =>
   `uploads/previews/${documentId}/${pageOneBased}.png`;
