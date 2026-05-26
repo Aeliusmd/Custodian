@@ -69,6 +69,11 @@ protectedRoutes.get(
   requireRole("ORG_ADMIN"),
   protectedController.listOrgActivityLogs,
 );
+protectedRoutes.get("/org-admin/settings/profile", requireAuth, requireRole("ORG_ADMIN"), protectedController.getOrgAdminProfile);
+protectedRoutes.put("/org-admin/settings/profile", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminProfile);
+protectedRoutes.post("/org-admin/settings/change-password", requireAuth, requireRole("ORG_ADMIN"), protectedController.changeOrgAdminPassword);
+protectedRoutes.get("/org-admin/settings/notifications", requireAuth, requireRole("ORG_ADMIN"), protectedController.getOrgAdminNotifications);
+protectedRoutes.put("/org-admin/settings/notifications", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminNotifications);
 
 protectedRoutes.get("/user", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.userData);
 protectedRoutes.get("/user/dashboard", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.userDashboard);

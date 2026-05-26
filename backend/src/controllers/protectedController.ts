@@ -21,6 +21,7 @@ import { sanitizeStoredFileName } from "../utils/uploadFileName";
 import { notifyOrgAdmin } from "../services/notificationService";
 import { emailService } from "../services/emailService";
 import { settingsModel } from "../models/settingsModel";
+import { userModel } from "../models/userModel";
 
 const recordOrgActivity = async (
   actorUserId: string,
@@ -2982,6 +2983,202 @@ export const protectedController = {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to reindex documents";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async getOrgAdminProfile(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const record = await userModel.findById(userId);
+      if (!record) return res.status(404).json({ message: "User not found" });
+
+      const [firstName = "", ...rest] = record.fullName.trim().split(" ");
+      return res.status(200).json({
+        firstName,
+        lastName: rest.join(" "),
+        email: record.email,
+        phone: record.phone ?? "",
+        language: record.language ?? "English",
+        role: req.user?.role === "ORG_ADMIN" ? "Org Admin" : "User",
+        bio: record.bio ?? "",
+        avatarDataUrl: record.avatarDataUrl ?? "",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to fetch profile";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async updateOrgAdminProfile(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const body = req.body as {
+        firstName?: string;
+        lastName?: string;
+        phone?: string;
+        language?: string;
+        bio?: string;
+        avatarDataUrl?: string;
+      };
+
+      const firstName = asString(body.firstName).trim();
+      const lastName = asString(body.lastName).trim();
+      const name = [firstName, lastName].filter(Boolean).join(" ") || undefined;
+
+      await userModel.update(userId, {
+        ...(name !== undefined ? { name } : {}),
+        phone: asString(body.phone).trim(),
+        language: asString(body.language).trim() || "English",
+        bio: asString(body.bio).trim(),
+        ...(body.avatarDataUrl !== undefined ? { avatarDataUrl: asString(body.avatarDataUrl) } : {}),
+      });
+
+      void recordOrgActivity(userId, req.user!.organizationId, {
+        action: "Profile Updated",
+        module: "Settings",
+        description: "User updated their profile.",
+      });
+
+      const updated = await userModel.findById(userId);
+      if (!updated) return res.status(404).json({ message: "User not found after update" });
+
+      const [fn = "", ...rest] = updated.fullName.trim().split(" ");
+      return res.status(200).json({
+        firstName: fn,
+        lastName: rest.join(" "),
+        email: updated.email,
+        phone: updated.phone ?? "",
+        language: updated.language ?? "English",
+        role: req.user?.role === "ORG_ADMIN" ? "Org Admin" : "User",
+        bio: updated.bio ?? "",
+        avatarDataUrl: updated.avatarDataUrl ?? "",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update profile";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async changeOrgAdminPassword(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const body = req.body as { currentPassword?: string; newPassword?: string; confirmPassword?: string };
+      const currentPassword = asString(body.currentPassword);
+      const newPassword = asString(body.newPassword);
+      const confirmPassword = asString(body.confirmPassword);
+
+      if (!currentPassword || !newPassword || !confirmPassword) {
+        return res.status(400).json({ message: "All password fields are required" });
+      }
+      if (newPassword !== confirmPassword) {
+        return res.status(400).json({ message: "New password and confirmation do not match" });
+      }
+      if (newPassword.length < 8) {
+        return res.status(400).json({ message: "New password must be at least 8 characters" });
+      }
+
+      const record = await userModel.findById(userId);
+      if (!record) return res.status(404).json({ message: "User not found" });
+
+      const valid = await bcrypt.compare(currentPassword, record.passwordHash);
+      if (!valid) return res.status(400).json({ message: "Current password is incorrect" });
+
+      const hash = await bcrypt.hash(newPassword, 10);
+      await userModel.updatePassword(userId, hash);
+
+      void recordOrgActivity(userId, req.user!.organizationId, {
+        action: "Password Changed",
+        module: "Settings",
+        description: "User changed their password.",
+      });
+
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to change password";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async getOrgAdminNotifications(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const organizationId = req.user?.organizationId;
+      if (!userId || !organizationId) return res.status(401).json({ message: "Unauthorized" });
+
+      const dbName = await getOrgDbNameFromSession(organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+
+      await dbPool.query(
+        `CREATE TABLE IF NOT EXISTS \`${dbName}\`.notification_settings (
+          id VARCHAR(60) NOT NULL,
+          user_id VARCHAR(36) NOT NULL,
+          label VARCHAR(120) NOT NULL,
+          description TEXT NULL,
+          icon VARCHAR(80) NOT NULL DEFAULT '',
+          enabled TINYINT(1) NOT NULL DEFAULT 1,
+          category VARCHAR(60) NOT NULL DEFAULT '',
+          sort_order INT NOT NULL DEFAULT 0,
+          PRIMARY KEY (id, user_id),
+          KEY idx_ns_user (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      );
+
+      const settings = await settingsModel.getNotifications(userId, organizationId);
+      return res.status(200).json(settings);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to fetch notification settings";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async updateOrgAdminNotifications(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const organizationId = req.user?.organizationId;
+      if (!userId || !organizationId) return res.status(401).json({ message: "Unauthorized" });
+
+      const dbName = await getOrgDbNameFromSession(organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+
+      await dbPool.query(
+        `CREATE TABLE IF NOT EXISTS \`${dbName}\`.notification_settings (
+          id VARCHAR(60) NOT NULL,
+          user_id VARCHAR(36) NOT NULL,
+          label VARCHAR(120) NOT NULL,
+          description TEXT NULL,
+          icon VARCHAR(80) NOT NULL DEFAULT '',
+          enabled TINYINT(1) NOT NULL DEFAULT 1,
+          category VARCHAR(60) NOT NULL DEFAULT '',
+          sort_order INT NOT NULL DEFAULT 0,
+          PRIMARY KEY (id, user_id),
+          KEY idx_ns_user (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      );
+
+      const payload = req.body as Array<{ id: string; enabled: boolean }>;
+      if (!Array.isArray(payload)) {
+        return res.status(400).json({ message: "Payload must be an array of notification settings" });
+      }
+
+      await settingsModel.setNotifications(userId, organizationId, payload as never);
+
+      void recordOrgActivity(userId, req.user!.organizationId, {
+        action: "Notifications Updated",
+        module: "Settings",
+        description: "User updated notification preferences.",
+      });
+
+      const updated = await settingsModel.getNotifications(userId, organizationId);
+      return res.status(200).json(updated);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update notification settings";
       return res.status(500).json({ message });
     }
   },
