@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { DocumentRecord } from '../../../../mocks/documents';
 
 const TEAL = '#0097B2';
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
 
 interface VersionEntry {
   id: string;

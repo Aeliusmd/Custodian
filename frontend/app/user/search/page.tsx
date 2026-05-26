@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback, type KeyboardEvent, type ReactElement } from 'react';
 
 const TEAL = '#0097B2';
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
 
 interface SearchResult {
   id: string;

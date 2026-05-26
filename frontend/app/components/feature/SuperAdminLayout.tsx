@@ -34,7 +34,7 @@ type SuperAdminLayoutProps = {
 };
 
 export default function SuperAdminLayout({ children }: SuperAdminLayoutProps) {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
   const [collapsed, setCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);

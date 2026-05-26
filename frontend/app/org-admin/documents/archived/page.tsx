@@ -14,7 +14,7 @@ interface Toast {
 }
 
 export default function ArchivedDocumentsPage() {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
   const router = useRouter();
   const [archivedDocs, setArchivedDocs] = useState<DocumentRecord[]>([]);
   const [search, setSearch] = useState('');

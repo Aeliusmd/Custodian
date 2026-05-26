@@ -8,7 +8,7 @@ function SetPasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token") ?? "";
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3351";
 
   const [inviteInfo, setInviteInfo] = useState<{ email: string; organizationName: string } | null>(null);
   const [loadingInvite, setLoadingInvite] = useState(true);

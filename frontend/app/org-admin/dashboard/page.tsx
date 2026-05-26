@@ -29,7 +29,7 @@ type DashboardResponse = {
 };
 
 export default function OrgAdminDashboard() {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
   const [chartRange, setChartRange] = useState<'daily' | 'weekly'>('weekly');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

@@ -14,7 +14,7 @@ interface UploadedFile {
 }
 
 export default function BulkUpload() {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
   const [categories, setCategories] = useState<Category[]>([]);
   const [step, setStep] = useState(0);
   const [selectedCatId, setSelectedCatId] = useState('');

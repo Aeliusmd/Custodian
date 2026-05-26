@@ -60,7 +60,7 @@ interface Toast {
 }
 
 export default function AllDocumentsPage() {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [viewerDoc, setViewerDoc] = useState<DocumentRecord | null>(null);
   const [search, setSearch] = useState('');

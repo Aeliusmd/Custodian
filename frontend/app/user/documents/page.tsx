@@ -10,7 +10,7 @@ import DeleteDocumentModal from './modals/DeleteDocumentModal';
 import DocumentViewerModal from '@/app/components/feature/DocumentViewerModal';
 
 const TEAL = '#0097B2';
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3051';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
 
 type ModalType = 'edit' | 'share' | 'version' | 'delete' | null;
 
