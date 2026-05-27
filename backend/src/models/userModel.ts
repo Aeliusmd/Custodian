@@ -198,14 +198,19 @@ export const userModel = {
     const orgs = await getActiveOrgs();
     for (const org of orgs) {
       await ensureUserProfileColumns(org.db_name);
-      const [result] = await dbPool.query(
-        `UPDATE \`${org.db_name}\`.users SET ${updates.join(", ")} WHERE id = ?`,
-        params,
-      );
-      if (Number((result as { affectedRows?: number }).affectedRows ?? 0) > 0) {
-        return;
+      try {
+        const [result] = await dbPool.query(
+          `UPDATE \`${org.db_name}\`.users SET ${updates.join(", ")} WHERE id = ?`,
+          params,
+        );
+        if (Number((result as { affectedRows?: number }).affectedRows ?? 0) > 0) {
+          return;
+        }
+      } catch (err) {
+        console.error(`[userModel.update] Failed for org db=${org.db_name}:`, err);
       }
     }
+    console.warn(`[userModel.update] No rows updated for user id=${id}`);
   },
 
   /**

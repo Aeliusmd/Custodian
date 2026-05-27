@@ -70,16 +70,29 @@ export default function AdminProfilePage() {
   const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      showToast('Image must be under 2 MB', 'error');
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Image must be under 5 MB', 'error');
+      e.target.value = '';
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => {
-      setAvatarDataUrl(reader.result as string);
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        // Resize to max 256×256 and compress to JPEG — keeps the stored string under ~50 KB
+        const MAX = 256;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { setAvatarDataUrl(ev.target?.result as string); return; }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        setAvatarDataUrl(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.src = ev.target?.result as string;
     };
     reader.readAsDataURL(file);
-    // reset so the same file can be re-selected if needed
     e.target.value = '';
   };
 

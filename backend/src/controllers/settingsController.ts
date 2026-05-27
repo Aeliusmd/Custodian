@@ -15,7 +15,13 @@ export const settingsController = {
     if (!req.user) {
       return unauthorized(res);
     }
-    return res.status(200).json(await settingsService.updateProfile(req.user, req.body));
+    try {
+      return res.status(200).json(await settingsService.updateProfile(req.user, req.body));
+    } catch (error) {
+      console.error("[settingsController.updateProfile]", error);
+      const message = error instanceof Error ? error.message : "Failed to update profile";
+      return res.status(500).json({ message });
+    }
   },
 
   async changePassword(req: Request, res: Response) {

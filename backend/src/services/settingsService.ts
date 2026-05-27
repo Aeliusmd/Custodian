@@ -90,7 +90,8 @@ export const settingsService = {
       description: "Updated personal profile information.",
     });
 
-    return settingsModel.setProfile(user.id, payload);
+    // Re-read from DB so the response always reflects what was actually persisted.
+    return this.getProfile(user);
   },
 
   /**
