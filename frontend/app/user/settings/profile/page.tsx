@@ -29,6 +29,7 @@ export default function UserProfilePage() {
   const [original, setOriginal] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isSavingAvatar, setIsSavingAvatar] = useState(false);
   const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
 
   const [currentPass, setCurrentPass] = useState('');
@@ -65,6 +66,49 @@ export default function UserProfilePage() {
 
   useEffect(() => { void loadProfile(); }, [loadProfile]);
 
+  const putProfile = async (payload: UserProfile): Promise<UserProfile> => {
+    const res = await fetch(`${API_BASE_URL}/user/settings/profile`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { message?: string };
+      throw new Error(body.message ?? 'Failed to save profile');
+    }
+    return res.json() as UserProfile;
+  };
+
+  const persistAvatar = async (jpegDataUrl: string) => {
+    if (!original) return;
+    const previousUrl = original.avatarDataUrl ?? '';
+    setIsSavingAvatar(true);
+    try {
+      const payload: UserProfile = {
+        ...profile,
+        firstName: profile.firstName.trim(),
+        lastName: profile.lastName.trim(),
+        email: profile.email.trim(),
+        phone: profile.phone.trim(),
+        bio: profile.bio.trim(),
+        avatarDataUrl: jpegDataUrl,
+      };
+      const updated = await putProfile(payload);
+      if (jpegDataUrl.trim() && !updated.avatarDataUrl?.trim()) {
+        throw new Error('Avatar was not saved. Please try again.');
+      }
+      setProfile(updated);
+      setOriginal(updated);
+      showToast('Avatar updated');
+    } catch (err) {
+      setProfile((p) => ({ ...p, avatarDataUrl: previousUrl }));
+      showToast(err instanceof Error ? err.message : 'Failed to save avatar', 'error');
+    } finally {
+      setIsSavingAvatar(false);
+    }
+  };
+
   const handleProfileSave = async () => {
     const e: Record<string, string> = {};
     if (!profile.firstName.trim()) e.firstName = 'First name is required';
@@ -76,17 +120,19 @@ export default function UserProfilePage() {
 
     try {
       setSaving(true);
-      const res = await fetch(`${API_BASE_URL}/user/settings/profile`, {
-        method: 'PUT',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profile),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { message?: string };
-        throw new Error(body.message ?? 'Failed to save profile');
+      const payload: UserProfile = {
+        ...profile,
+        firstName: profile.firstName.trim(),
+        lastName: profile.lastName.trim(),
+        email: profile.email.trim(),
+        phone: profile.phone.trim(),
+        bio: profile.bio.trim(),
+      };
+      const sentAvatar = profile.avatarDataUrl?.trim();
+      const updated = await putProfile(payload);
+      if (sentAvatar && !updated.avatarDataUrl?.trim()) {
+        throw new Error('Avatar was not saved. Please try again.');
       }
-      const updated = await res.json() as UserProfile;
       setProfile(updated);
       setOriginal(updated);
       showToast('Profile updated successfully');
@@ -101,25 +147,45 @@ export default function UserProfilePage() {
     if (original) { setProfile(original); setProfileErrors({}); }
   };
 
-  const handleAvatarFile = (file: File | undefined) => {
+  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) {
       showToast('Please choose an image file', 'error');
+      e.target.value = '';
       return;
     }
-    if (file.size > 1024 * 1024) {
-      showToast('Avatar image must be 1 MB or smaller', 'error');
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Image must be under 5 MB', 'error');
+      e.target.value = '';
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result === 'string') {
-        setProfile((p) => ({ ...p, avatarDataUrl: result }));
-      }
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 256;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          const fallback = ev.target?.result as string;
+          setProfile((p) => ({ ...p, avatarDataUrl: fallback }));
+          void persistAvatar(fallback);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setProfile((p) => ({ ...p, avatarDataUrl: jpegDataUrl }));
+        void persistAvatar(jpegDataUrl);
+      };
+      img.src = ev.target?.result as string;
     };
     reader.onerror = () => showToast('Failed to read avatar image', 'error');
     reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const handlePasswordChange = async () => {
@@ -198,12 +264,27 @@ export default function UserProfilePage() {
       <div className="max-w-3xl space-y-6">
         {/* Avatar card */}
         <div className="bg-white rounded-2xl border border-gray-200 p-6 flex items-center gap-5">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0 overflow-hidden" style={{ background: '#d97706' }}>
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleAvatarFileChange}
+          />
+          <div
+            className="relative w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0 overflow-hidden"
+            style={{ background: profile.avatarDataUrl ? 'transparent' : '#d97706' }}
+          >
             {profile.avatarDataUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={profile.avatarDataUrl} alt="Profile avatar" className="h-full w-full object-cover" />
             ) : (
               initials
+            )}
+            {isSavingAvatar && (
+              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                <i className="ri-loader-4-line text-white text-xl animate-spin" />
+              </div>
             )}
           </div>
           <div>
@@ -213,28 +294,27 @@ export default function UserProfilePage() {
               <button
                 type="button"
                 onClick={() => avatarInputRef.current?.click()}
-                className="text-sm font-semibold cursor-pointer hover:underline"
+                disabled={isSavingAvatar}
+                className="text-sm font-semibold cursor-pointer hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ color: TEAL }}
               >
-                Change Avatar
+                {isSavingAvatar ? 'Saving...' : 'Change Avatar'}
               </button>
               {profile.avatarDataUrl && (
                 <button
                   type="button"
-                  onClick={() => setProfile((p) => ({ ...p, avatarDataUrl: '' }))}
-                  className="text-sm font-semibold text-gray-400 hover:text-red-500 cursor-pointer"
+                  disabled={isSavingAvatar}
+                  onClick={() => {
+                    setProfile((p) => ({ ...p, avatarDataUrl: '' }));
+                    void persistAvatar('');
+                  }}
+                  className="text-sm font-semibold text-gray-400 hover:text-red-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Remove
                 </button>
               )}
             </div>
-            <input
-              ref={avatarInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(event) => handleAvatarFile(event.target.files?.[0])}
-            />
+            <p className="text-xs text-gray-400 mt-1">Photo saves automatically when you choose an image.</p>
           </div>
         </div>
 

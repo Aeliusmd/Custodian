@@ -24,6 +24,7 @@ export default function AdminProfilePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isSavingAvatar, setIsSavingAvatar] = useState(false);
 
   const [currentPass, setCurrentPass] = useState('');
   const [newPass, setNewPass] = useState('');
@@ -67,6 +68,42 @@ export default function AdminProfilePage() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3500);
   };
 
+  const persistAvatar = async (jpegDataUrl: string) => {
+    if (!initialProfile) return;
+    const previousUrl = initialProfile.avatarDataUrl ?? '';
+    setIsSavingAvatar(true);
+    try {
+      const payload: UserProfile = {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        language,
+        role: initialProfile.role,
+        bio: bio.trim(),
+        avatarDataUrl: jpegDataUrl,
+      };
+      const updated = await settingsApi.updateProfile(payload);
+      if (jpegDataUrl.trim() && !updated.avatarDataUrl?.trim()) {
+        throw new Error('Avatar was not saved. Please try again.');
+      }
+      setInitialProfile(updated);
+      setAvatarDataUrl(updated.avatarDataUrl ?? '');
+      window.dispatchEvent(new CustomEvent('custodox-avatar-updated', {
+        detail: {
+          avatarDataUrl: updated.avatarDataUrl ?? '',
+          fullName: `${updated.firstName} ${updated.lastName}`.trim(),
+        },
+      }));
+      showToast('Avatar updated');
+    } catch (err) {
+      setAvatarDataUrl(previousUrl);
+      showToast(err instanceof Error ? err.message : 'Failed to save avatar', 'error');
+    } finally {
+      setIsSavingAvatar(false);
+    }
+  };
+
   const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -88,7 +125,9 @@ export default function AdminProfilePage() {
         const ctx = canvas.getContext('2d');
         if (!ctx) { setAvatarDataUrl(ev.target?.result as string); return; }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        setAvatarDataUrl(canvas.toDataURL('image/jpeg', 0.8));
+        const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setAvatarDataUrl(jpegDataUrl);
+        void persistAvatar(jpegDataUrl);
       };
       img.src = ev.target?.result as string;
     };
@@ -120,10 +159,13 @@ export default function AdminProfilePage() {
         bio: bio.trim(),
         avatarDataUrl,
       };
+      const sentAvatar = avatarDataUrl?.trim();
       const updated = await settingsApi.updateProfile(payload);
+      if (sentAvatar && !updated.avatarDataUrl?.trim()) {
+        throw new Error('Avatar was not saved. Please try again.');
+      }
       setInitialProfile(updated);
       setAvatarDataUrl(updated.avatarDataUrl ?? '');
-      // Notify the layout so it updates the header avatar immediately
       window.dispatchEvent(new CustomEvent('custodox-avatar-updated', {
         detail: { avatarDataUrl: updated.avatarDataUrl ?? '', fullName: `${updated.firstName} ${updated.lastName}`.trim() },
       }));
@@ -247,7 +289,7 @@ export default function AdminProfilePage() {
             onChange={handleAvatarFileChange}
           />
           <div
-            className="w-16 h-16 rounded-full flex-shrink-0 overflow-hidden flex items-center justify-center text-white font-bold text-xl"
+            className="relative w-16 h-16 rounded-full flex-shrink-0 overflow-hidden flex items-center justify-center text-white font-bold text-xl"
             style={{ background: avatarDataUrl ? 'transparent' : TEAL }}
           >
             {avatarDataUrl ? (
@@ -255,6 +297,11 @@ export default function AdminProfilePage() {
               <img src={avatarDataUrl} alt="Avatar" className="w-full h-full object-cover" />
             ) : (
               initials
+            )}
+            {isSavingAvatar && (
+              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                <i className="ri-loader-4-line text-white text-xl animate-spin" />
+              </div>
             )}
           </div>
           <div>
@@ -265,12 +312,15 @@ export default function AdminProfilePage() {
               {displayRole(initialProfile?.role)}
             </p>
             <button
+              type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="text-sm font-semibold mt-1 cursor-pointer hover:underline"
+              disabled={isSavingAvatar}
+              className="text-sm font-semibold mt-1 cursor-pointer hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ color: TEAL }}
             >
-              Change Avatar
+              {isSavingAvatar ? 'Saving...' : 'Change Avatar'}
             </button>
+            <p className="text-xs text-gray-400 mt-1">Photo saves automatically when you choose an image.</p>
           </div>
         </div>
 
