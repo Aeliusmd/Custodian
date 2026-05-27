@@ -31,7 +31,9 @@ export const settingsService = {
         avatarDataUrl: "",
       };
     }
-    const dbUser = await userModel.findById(user.id);
+    const dbUser = user.organizationId
+      ? await userModel.findByIdInOrg(user.id, user.organizationId)
+      : await userModel.findById(user.id);
     const fullName = dbUser?.fullName ?? user.fullName;
     const [firstName = "", ...rest] = fullName.trim().split(" ");
     return {
@@ -80,7 +82,11 @@ export const settingsService = {
     if (payload.language !== undefined) profileUpdate.language = payload.language;
     if (payload.bio !== undefined) profileUpdate.bio = payload.bio;
     if (payload.avatarDataUrl !== undefined) profileUpdate.avatarDataUrl = payload.avatarDataUrl;
-    await userModel.update(user.id, profileUpdate);
+    if (user.organizationId) {
+      await userModel.updateInOrg(user.id, user.organizationId, profileUpdate);
+    } else {
+      await userModel.update(user.id, profileUpdate);
+    }
 
     await settingsModel.appendActivity(user.id, user.organizationId, {
       id: `log-${Date.now()}`,

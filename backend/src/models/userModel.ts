@@ -1,6 +1,7 @@
 import { dbPool } from "../config/db";
 import { env } from "../config/env";
 import type { Role } from "../types/auth";
+import { resolveTenantDbName } from "../utils/tenantDb";
 
 export interface UserRecord {
   id: string;
@@ -119,6 +120,54 @@ export const userModel = {
   },
 
   /**
+   * Finds a tenant user by ID within a specific organization's tenant DB.
+   *
+   * @param id - The user's UUID.
+   * @param organizationId - The organization UUID from the authenticated session.
+   */
+  async findByIdInOrg(id: string, organizationId: string): Promise<UserRecord | null> {
+    const dbName = await resolveTenantDbName(organizationId);
+    await ensureUserProfileColumns(dbName);
+    const [rows] = await dbPool.query(
+      `SELECT id, name, email, password_hash AS passwordHash, role, status,
+              COALESCE(phone, '') AS phone,
+              COALESCE(language, 'English') AS language,
+              COALESCE(bio, '') AS bio,
+              COALESCE(avatar_data_url, '') AS avatarDataUrl
+         FROM \`${dbName}\`.users
+        WHERE id = ?
+        LIMIT 1`,
+      [id],
+    );
+    const row = (rows as Array<{
+      id: string;
+      name: string;
+      email: string;
+      passwordHash: string;
+      role: string;
+      status: string;
+      phone: string;
+      language: string;
+      bio: string;
+      avatarDataUrl: string;
+    }>)[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      email: row.email,
+      passwordHash: row.passwordHash,
+      fullName: row.name,
+      role: mapTenantRole(row.role),
+      organizationId,
+      isActive: row.status.toLowerCase() === "active",
+      phone: row.phone,
+      language: row.language,
+      bio: row.bio,
+      avatarDataUrl: row.avatarDataUrl,
+    };
+  },
+
+  /**
    * Finds a tenant user by email address, searching across all active
    * tenant databases.
    *
@@ -211,6 +260,44 @@ export const userModel = {
       }
     }
     console.warn(`[userModel.update] No rows updated for user id=${id}`);
+  },
+
+  /**
+   * Updates profile fields for a user in a specific organization's tenant DB.
+   * Throws if no row is updated.
+   *
+   * @param id - The user's UUID.
+   * @param organizationId - The organization UUID from the authenticated session.
+   * @param data - Partial object of fields to update.
+   */
+  async updateInOrg(
+    id: string,
+    organizationId: string,
+    data: Partial<{ name: string; phone: string; language: string; bio: string; avatarDataUrl: string }>,
+  ): Promise<void> {
+    const updates: string[] = [];
+    const params: Array<string> = [];
+
+    if (data.name !== undefined) { updates.push("name = ?"); params.push(data.name); }
+    if (data.phone !== undefined) { updates.push("phone = ?"); params.push(data.phone); }
+    if (data.language !== undefined) { updates.push("language = ?"); params.push(data.language); }
+    if (data.bio !== undefined) { updates.push("bio = ?"); params.push(data.bio); }
+    if (data.avatarDataUrl !== undefined) { updates.push("avatar_data_url = ?"); params.push(data.avatarDataUrl); }
+
+    if (updates.length === 0) return;
+
+    const dbName = await resolveTenantDbName(organizationId);
+    await ensureUserProfileColumns(dbName);
+    params.push(id);
+
+    const [result] = await dbPool.query(
+      `UPDATE \`${dbName}\`.users SET ${updates.join(", ")} WHERE id = ?`,
+      params,
+    );
+    const affected = Number((result as { affectedRows?: number }).affectedRows ?? 0);
+    if (affected === 0) {
+      throw new Error("User not found in organization tenant");
+    }
   },
 
   /**
