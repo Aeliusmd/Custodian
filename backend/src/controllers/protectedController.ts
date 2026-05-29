@@ -16,7 +16,8 @@ import {
   reindexTenantSearchDocuments,
 } from "../services/documentSearchIndexService";
 import { enqueueDocumentOcr } from "../services/documentOcrQueue";
-import { absoluteFromStorageRoot, previewPageRelativePath, unlinkQuiet, writeUploadedDocumentFile } from "../services/documentStorageService";
+import { renderPdfPageImage } from "../services/documentOcrExternalClient";
+import { absoluteFromStorageRoot, previewPageRelativePath, unlinkQuiet, writePreviewPngPage, writeUploadedDocumentFile } from "../services/documentStorageService";
 import { sanitizeStoredFileName } from "../utils/uploadFileName";
 import { notifyOrgAdmin } from "../services/notificationService";
 import { emailService } from "../services/emailService";
@@ -63,6 +64,51 @@ const notifyStorageThresholdIfNeeded = (
 
 const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
+
+/**
+ * Ensures a rendered PNG exists for a document page, rendering it on demand via
+ * the OCR service's `/render-page` endpoint and caching it on disk. Returns the
+ * absolute path to the cached PNG, or `null` if it can't be produced (no OCR
+ * service URL, missing/invalid source file, or the file is not a PDF). Callers
+ * treat `null` as "no preview available" (the frontend then falls back to the
+ * native in-browser viewer).
+ */
+const ensurePreviewPageImageOnDisk = async (
+  documentId: string,
+  pageOneBased: number,
+  fileRelativePath: string,
+  fileName: string,
+): Promise<string | null> => {
+  const previewAbsolute = absoluteFromStorageRoot(
+    env.storageRoot,
+    previewPageRelativePath(documentId, pageOneBased),
+  );
+  if (existsSync(previewAbsolute)) return previewAbsolute;
+
+  const serviceUrl = env.ocrServiceUrl?.trim();
+  if (!serviceUrl) return null;
+
+  const sourceRelative = asString(fileRelativePath).trim();
+  if (!sourceRelative) return null;
+  const sourceAbsolute = absoluteFromStorageRoot(env.storageRoot, sourceRelative);
+  if (!isPathWithinStorageRoot(env.storageRoot, sourceAbsolute) || !existsSync(sourceAbsolute)) {
+    return null;
+  }
+
+  const buf = await readFile(sourceAbsolute);
+  // Only PDFs can be rasterized to page images.
+  if (buf.length < 5 || buf.subarray(0, 5).toString("latin1") !== "%PDF-") return null;
+
+  const png = await renderPdfPageImage(
+    serviceUrl,
+    buf,
+    fileName || "document.pdf",
+    pageOneBased,
+    env.ocrServiceTimeoutMs,
+  );
+  await writePreviewPngPage(env.storageRoot, documentId, pageOneBased, png);
+  return previewAbsolute;
+};
 
 /** Multer / append-field may store values as string, string[], or Buffer. */
 const firstMultipartField = (value: unknown): string => {
@@ -400,10 +446,6 @@ const advancedSearchDocumentsFromTenant = async (
   const conditions: string[] = ["d.status = ?"];
   const params: unknown[] = [status];
 
-  if (!options?.archived) {
-    conditions.push("d.ocr_status = 'ready'");
-  }
-
   if (options?.uploadedByUserId) {
     conditions.push("d.uploaded_by = ?");
     params.push(options.uploadedByUserId);
@@ -441,6 +483,9 @@ const advancedSearchDocumentsFromTenant = async (
 
   const keyword = asString(criteria.keyword).trim();
   if (keyword) {
+    if (!options?.archived) {
+      conditions.push("d.ocr_status = 'ready'");
+    }
     const kwLike = `%${keyword}%`;
     conditions.push(
       `(
@@ -588,7 +633,9 @@ const runAdvancedSearch = async (
     const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
     if (!dbName) return res.status(404).json({ message: "Organization not found" });
 
-    const { criteria, archived } = parseAdvancedSearchBody(req.body);
+    const { criteria: rawCriteria, archived } = parseAdvancedSearchBody(req.body);
+    const { uploadedBy: _stripped, ...scopedCriteria } = rawCriteria;
+    const criteria = options?.uploadedByUserId ? scopedCriteria : rawCriteria;
     const searchOptions: { uploadedByUserId?: string; archived?: boolean } = { archived };
     if (options?.uploadedByUserId) searchOptions.uploadedByUserId = options.uploadedByUserId;
     const results = await advancedSearchDocumentsFromTenant(dbName, criteria, searchOptions);
@@ -1335,6 +1382,7 @@ export const protectedController = {
       if (mainAbsoluteForOcr) {
         enqueueDocumentOcr({
           dbName,
+          organizationId: req.user?.organizationId ?? "",
           documentId,
           absoluteMainPath: mainAbsoluteForOcr,
           safeStorageName,
@@ -1765,6 +1813,7 @@ export const protectedController = {
           for (const p of prepared) {
             enqueueDocumentOcr({
               dbName,
+              organizationId: req.user?.organizationId ?? "",
               documentId: p.documentId,
               absoluteMainPath: p.absoluteMainPath,
               safeStorageName: p.safeStorageName,
@@ -1935,6 +1984,63 @@ export const protectedController = {
     }
   },
 
+  async retryOrgAdminDocumentOcr(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const id = asString(req.params.id).trim();
+      if (!id) return res.status(400).json({ message: "Document id is required" });
+
+      await ensureTenantDocumentsOcrSchema(dbName);
+      const [rows] = await dbPool.query(
+        `SELECT id, name, file_path
+           FROM \`${dbName}\`.documents
+          WHERE id = ?
+            AND status <> 'deleted'
+          LIMIT 1`,
+        [id],
+      );
+      const doc = (rows as Array<{ id: string; name: string; file_path: string | null }>)[0];
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+
+      const relativePath = asString(doc.file_path).trim();
+      if (!relativePath) return res.status(400).json({ message: "Document file path is missing" });
+      const absolutePath = absoluteFromStorageRoot(env.storageRoot, relativePath);
+      if (!isPathWithinStorageRoot(env.storageRoot, absolutePath)) {
+        return res.status(400).json({ message: "Invalid document file path" });
+      }
+      if (!existsSync(absolutePath)) {
+        return res.status(404).json({
+          message: "Document file is not available in this backend storage folder. Use the backend that uploaded it or configure a shared STORAGE_ROOT.",
+        });
+      }
+
+      await dbPool.query(
+        `UPDATE \`${dbName}\`.documents
+            SET ocr_text_path = NULL,
+                ocr_status = 'pending',
+                preview_page_count = 0,
+                updated_at = NOW()
+          WHERE id = ?
+          LIMIT 1`,
+        [id],
+      );
+
+      enqueueDocumentOcr({
+        dbName,
+        organizationId: req.user?.organizationId ?? "",
+        documentId: id,
+        absoluteMainPath: absolutePath,
+        safeStorageName: path.basename(relativePath),
+      });
+
+      return res.status(202).json({ success: true, ocrStatus: "Pending" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to retry OCR";
+      return res.status(500).json({ message });
+    }
+  },
+
   async getOrgAdminDocumentPreview(req: Request, res: Response) {
     try {
       const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
@@ -1948,26 +2054,27 @@ export const protectedController = {
       }
       await ensureTenantDocumentsOcrSchema(dbName);
       const [rows] = await dbPool.query(
-        `SELECT preview_page_count
+        `SELECT preview_page_count, file_path, name
            FROM \`${dbName}\`.documents
           WHERE id = ?
             AND status <> 'deleted'
           LIMIT 1`,
         [id],
       );
-      const maxPage = Math.max(
-        0,
-        Math.floor(Number((rows as Array<{ preview_page_count: number }>)[0]?.preview_page_count ?? 0)),
-      );
+      const row = (rows as Array<{ preview_page_count: number; file_path: string | null; name: string }>)[0];
+      const maxPage = Math.max(0, Math.floor(Number(row?.preview_page_count ?? 0)));
       if (maxPage < 1 || pageNum > maxPage) {
         return res.status(404).json({ message: "Preview not found" });
       }
-      const relative = previewPageRelativePath(id, pageNum);
-      const absolute = absoluteFromStorageRoot(env.storageRoot, relative);
+      const absolute = absoluteFromStorageRoot(env.storageRoot, previewPageRelativePath(id, pageNum));
       if (!isPathWithinStorageRoot(env.storageRoot, absolute)) {
         return res.status(400).json({ message: "Invalid path" });
       }
-      if (!existsSync(absolute)) return res.status(404).json({ message: "Preview file missing" });
+      // Render the page on demand (and cache it) if it hasn't been rasterized yet.
+      if (!existsSync(absolute)) {
+        const rendered = await ensurePreviewPageImageOnDisk(id, pageNum, row?.file_path ?? "", row?.name ?? "");
+        if (!rendered) return res.status(404).json({ message: "Preview file missing" });
+      }
       res.setHeader("Content-Type", "image/png");
       res.setHeader("Cache-Control", "private, max-age=3600");
       res.sendFile(absolute, (err) => {
@@ -2515,45 +2622,18 @@ export const protectedController = {
 
   async searchUserOwnDocuments(req: Request, res: Response) {
     try {
-      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
-      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const organizationId = req.user?.organizationId;
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const dbName = await getOrgDbNameFromSession(organizationId);
+      if (!dbName || !organizationId) return res.status(404).json({ message: "Organization not found" });
 
       const q = asString(req.query.q).trim();
-      if (!q) return res.status(200).json([]);
+      if (!q) return res.status(200).json({ query: q, results: [], total: 0 });
 
-      const like = `%${q}%`;
-      const [rows] = await dbPool.query(
-        `SELECT d.id, d.name, d.created_at, d.uploaded_by AS uploaded_by_id,
-                COALESCE(c.name, 'Uncategorized') AS category_name,
-                COALESCE(u.name, 'Unknown') AS uploader_name
-           FROM \`${dbName}\`.documents d
-           LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
-           LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
-          WHERE d.uploaded_by = ?
-            AND d.status <> 'deleted'
-            AND (d.name LIKE ? OR c.name LIKE ?)
-          ORDER BY d.created_at DESC
-          LIMIT 30`,
-        [req.user?.id, like, like],
-      );
-
-      const results = (rows as Array<{
-        id: string;
-        name: string;
-        created_at: Date;
-        category_name: string;
-        uploader_name: string;
-      }>).map((r) => ({
-        id: r.id,
-        documentName: r.name,
-        snippet: `Document matching "${q}" in ${r.category_name}`,
-        category: r.category_name,
-        uploadDate: toIsoDate(new Date(r.created_at)),
-        uploadedBy: r.uploader_name,
-        keywords: [q],
-      }));
-
-      return res.status(200).json(results);
+      const metadataResults = await searchActiveReadyDocumentsForGlobalSearch(dbName, q, { uploadedBy: userId });
+      const results = await runGlobalSearch(metadataResults, organizationId, dbName, q, { uploadedByUserId: userId });
+      return res.status(200).json({ query: q, results, total: results.length });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to search documents";
       return res.status(500).json({ message });
@@ -2983,6 +3063,363 @@ export const protectedController = {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to reindex documents";
       return res.status(500).json({ message });
+    }
+  },
+
+  async getUserDocumentPreview(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const id = asString(req.params.id).trim();
+      const pageRaw = asString(req.params.pageNum).trim();
+      if (!id) return res.status(400).json({ message: "Document id is required" });
+      const pageNum = Number.parseInt(pageRaw, 10);
+      if (!Number.isFinite(pageNum) || pageNum < 1) {
+        return res.status(400).json({ message: "Invalid page" });
+      }
+      await ensureTenantDocumentsOcrSchema(dbName);
+      const [rows] = await dbPool.query(
+        `SELECT preview_page_count, file_path, name
+           FROM \`${dbName}\`.documents
+          WHERE id = ?
+            AND uploaded_by = ?
+            AND status <> 'deleted'
+          LIMIT 1`,
+        [id, userId],
+      );
+      const row = (rows as Array<{ preview_page_count: number; file_path: string | null; name: string }>)[0];
+      const maxPage = Math.max(0, Math.floor(Number(row?.preview_page_count ?? 0)));
+      if (maxPage < 1 || pageNum > maxPage) {
+        return res.status(404).json({ message: "Preview not found" });
+      }
+      const absolute = absoluteFromStorageRoot(env.storageRoot, previewPageRelativePath(id, pageNum));
+      if (!isPathWithinStorageRoot(env.storageRoot, absolute)) {
+        return res.status(400).json({ message: "Invalid path" });
+      }
+      // Render the page on demand (and cache it) if it hasn't been rasterized yet.
+      if (!existsSync(absolute)) {
+        const rendered = await ensurePreviewPageImageOnDisk(id, pageNum, row?.file_path ?? "", row?.name ?? "");
+        if (!rendered) return res.status(404).json({ message: "Preview file missing" });
+      }
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      res.sendFile(absolute, (err) => {
+        if (err && !res.headersSent) res.status(500).json({ message: "Failed to send preview" });
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load preview";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async listUserDocumentVersions(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const id = asString(req.params.id).trim();
+      if (!id) return res.status(400).json({ message: "Document id is required" });
+
+      // Verify ownership
+      const [ownerRows] = await dbPool.query(
+        `SELECT id FROM \`${dbName}\`.documents WHERE id = ? AND uploaded_by = ? AND status <> 'deleted' LIMIT 1`,
+        [id, userId],
+      );
+      if (!(ownerRows as unknown[]).length) return res.status(404).json({ message: "Document not found" });
+
+      await ensureDocumentVersionsTable(dbName);
+
+      const [countRows] = await dbPool.query(
+        `SELECT COUNT(*) AS cnt FROM \`${dbName}\`.document_versions WHERE document_id = ?`,
+        [id],
+      );
+      const cnt = Number((countRows as Array<{ cnt: number }>)[0]?.cnt ?? 0);
+      if (cnt === 0) {
+        const [docRows] = await dbPool.query(
+          `SELECT file_path, file_size_kb, file_type, uploaded_by, created_at
+             FROM \`${dbName}\`.documents
+            WHERE id = ? AND status <> 'deleted' LIMIT 1`,
+          [id],
+        );
+        const doc = (docRows as Array<{ file_path: string | null; file_size_kb: number; file_type: string; uploaded_by: string; created_at: Date }>)[0];
+        if (doc) {
+          await dbPool.query(
+            `INSERT IGNORE INTO \`${dbName}\`.document_versions
+               (id, document_id, version_number, version_name, file_path, file_size_kb, file_type, uploaded_by, is_current, created_at)
+             VALUES (?, ?, 1, 'v1.0', ?, ?, ?, ?, 1, ?)`,
+            [crypto.randomUUID(), id, doc.file_path ?? "", doc.file_size_kb ?? 0, doc.file_type ?? "FILE", doc.uploaded_by, doc.created_at],
+          );
+        }
+      }
+
+      const [rows] = await dbPool.query(
+        `SELECT dv.id, dv.version_number, dv.version_name, dv.file_size_kb, dv.file_type, dv.is_current, dv.notes, dv.created_at,
+                COALESCE(NULLIF(TRIM(u.name), ''), u.email, 'Unknown') AS uploaded_by
+           FROM \`${dbName}\`.document_versions dv
+           LEFT JOIN \`${dbName}\`.users u ON u.id = dv.uploaded_by
+          WHERE dv.document_id = ?
+          ORDER BY dv.version_number DESC`,
+        [id],
+      );
+
+      const versions = (rows as Array<{
+        id: string; version_number: number; version_name: string; file_size_kb: number;
+        file_type: string; is_current: number; notes: string | null; created_at: Date; uploaded_by: string;
+      }>).map((v) => ({
+        id: v.id,
+        versionName: v.version_name,
+        date: toIsoDate(new Date(v.created_at)),
+        uploadedBy: v.uploaded_by,
+        isCurrent: Boolean(v.is_current),
+        fileSize: v.file_size_kb >= 1024 ? `${(v.file_size_kb / 1024).toFixed(1)} MB` : `${v.file_size_kb} KB`,
+        fileType: String(v.file_type || "FILE").toUpperCase(),
+        notes: v.notes ?? "",
+      }));
+
+      return res.status(200).json({ versions });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load version history";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async restoreUserDocumentVersion(req: Request, res: Response) {
+    const conn = await dbPool.getConnection();
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const docId = asString(req.params.id).trim();
+      const versionId = asString(req.params.versionId).trim();
+      if (!docId || !versionId) return res.status(400).json({ message: "Document and version id are required" });
+
+      // Verify ownership
+      const [ownerRows] = await dbPool.query(
+        `SELECT id FROM \`${dbName}\`.documents WHERE id = ? AND uploaded_by = ? AND status <> 'deleted' LIMIT 1`,
+        [docId, userId],
+      );
+      if (!(ownerRows as unknown[]).length) return res.status(404).json({ message: "Document not found" });
+
+      await ensureDocumentVersionsTable(dbName);
+
+      const [vRows] = await dbPool.query(
+        `SELECT id, version_name, file_path, file_size_kb, file_type, is_current
+           FROM \`${dbName}\`.document_versions
+          WHERE id = ? AND document_id = ? LIMIT 1`,
+        [versionId, docId],
+      );
+      const version = (vRows as Array<{
+        id: string; version_name: string; file_path: string; file_size_kb: number; file_type: string; is_current: number;
+      }>)[0];
+      if (!version) return res.status(404).json({ message: "Version not found" });
+      if (version.is_current) return res.status(400).json({ message: "This version is already current" });
+
+      await conn.beginTransaction();
+
+      await conn.query(
+        `UPDATE \`${dbName}\`.documents SET file_path = ?, file_size_kb = ?, file_type = ?, updated_at = NOW()
+          WHERE id = ? AND status <> 'deleted'`,
+        [version.file_path, version.file_size_kb, version.file_type, docId],
+      );
+      await conn.query(
+        `UPDATE \`${dbName}\`.document_versions SET is_current = 0 WHERE document_id = ?`,
+        [docId],
+      );
+      await conn.query(
+        `UPDATE \`${dbName}\`.document_versions SET is_current = 1 WHERE id = ?`,
+        [versionId],
+      );
+
+      await conn.commit();
+
+      return res.status(200).json({ success: true, restoredVersionName: version.version_name });
+    } catch (error) {
+      await conn.rollback().catch(() => {});
+      const message = error instanceof Error ? error.message : "Failed to restore version";
+      return res.status(500).json({ message });
+    } finally {
+      conn.release();
+    }
+  },
+
+  async shareUserDocument(req: Request, res: Response) {
+    try {
+      const user = req.user!;
+      const docId = asString(req.params.id).trim();
+      if (!docId) return res.status(400).json({ message: "Document ID required" });
+
+      const { recipientEmails, duration } = req.body as { recipientEmails?: unknown; duration?: unknown };
+
+      const emails = Array.isArray(recipientEmails)
+        ? (recipientEmails as unknown[]).filter(
+            (e): e is string => typeof e === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e),
+          )
+        : [];
+      if (emails.length === 0) {
+        return res.status(400).json({ message: "At least one valid recipient email is required" });
+      }
+
+      const dur = asString(duration).trim() || "30min";
+      const durationMs: Record<string, number> = {
+        "30min": 30 * 60 * 1000,
+        "1hr":   60 * 60 * 1000,
+        "2hr":   2 * 60 * 60 * 1000,
+        "24hr":  24 * 60 * 60 * 1000,
+      };
+      const durationLabels: Record<string, string> = {
+        "30min": "30 minutes",
+        "1hr":   "1 hour",
+        "2hr":   "2 hours",
+        "24hr":  "24 hours",
+      };
+      const ms = durationMs[dur] ?? 30 * 60 * 1000;
+      const label = durationLabels[dur] ?? "30 minutes";
+
+      const dbName = await getOrgDbNameFromSession(user.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+
+      // Verify the document exists and belongs to this user
+      const [docRows] = await dbPool.query(
+        `SELECT name, file_path, file_type FROM \`${dbName}\`.documents
+          WHERE id = ? AND uploaded_by = ? AND status <> 'deleted' LIMIT 1`,
+        [docId, user.id],
+      );
+      const doc = (docRows as Array<{ name: string; file_path: string | null; file_type: string }>)[0];
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+
+      const token = crypto.randomBytes(16).toString("hex");
+      const otp = String(Math.floor(100000 + Math.random() * 900000));
+      const otpHash = await bcrypt.hash(otp, 10);
+      const expiresAt = new Date(Date.now() + ms);
+
+      await dbPool.query(
+        `CREATE TABLE IF NOT EXISTS \`${env.mysqlDatabase}\`.share_tokens (
+           id              VARCHAR(36)   NOT NULL,
+           token           VARCHAR(64)   NOT NULL,
+           organization_id VARCHAR(36)   NOT NULL,
+           document_id     VARCHAR(36)   NOT NULL,
+           document_name   VARCHAR(512)  NOT NULL,
+           file_path       VARCHAR(1024) NOT NULL,
+           file_type       VARCHAR(50)   NOT NULL DEFAULT 'FILE',
+           recipient_emails JSON         NOT NULL,
+           expires_at      DATETIME      NOT NULL,
+           otp_hash        VARCHAR(255)  NOT NULL,
+           verified        TINYINT(1)    NOT NULL DEFAULT 0,
+           created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+           PRIMARY KEY (id),
+           UNIQUE KEY uq_sht_token (token),
+           KEY idx_sht_doc (document_id),
+           KEY idx_sht_org (organization_id),
+           KEY idx_sht_expires (expires_at)
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      );
+
+      const shareId = crypto.randomUUID();
+      await dbPool.query(
+        `INSERT INTO \`${env.mysqlDatabase}\`.share_tokens
+           (id, token, organization_id, document_id, document_name, file_path, file_type, recipient_emails, expires_at, otp_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [shareId, token, user.organizationId, docId, doc.name, doc.file_path ?? "", doc.file_type, JSON.stringify(emails), expiresAt, otpHash],
+      );
+
+      const shareLink = `${env.frontendBaseUrl}/share/${token}`;
+
+      const [orgRows] = await dbPool.query(
+        `SELECT name FROM \`${env.mysqlDatabase}\`.organizations WHERE id = ? LIMIT 1`,
+        [user.organizationId],
+      );
+      const orgName = (orgRows as Array<{ name: string }>)[0]?.name ?? "";
+
+      for (const email of emails) {
+        void emailService.sendShareLinkEmail({
+          to: email,
+          documentName: doc.name,
+          shareLink,
+          otp,
+          expiresIn: label,
+          sharedByName: user.fullName,
+          orgName,
+        });
+      }
+
+      return res.status(200).json({ token, shareLink, expiresAt: expiresAt.toISOString() });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to share document";
+      return res.status(500).json({ message });
+    }
+  },
+
+  async bulkDownloadUserDocuments(req: Request, res: Response) {
+    try {
+      const dbName = await getOrgDbNameFromSession(req.user?.organizationId);
+      if (!dbName) return res.status(404).json({ message: "Organization not found" });
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const { ids } = req.body as { ids?: unknown };
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: "ids array is required" });
+      }
+      const docIds = (ids as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 50);
+      if (docIds.length === 0) return res.status(400).json({ message: "No valid document ids provided" });
+
+      const placeholders = docIds.map(() => "?").join(", ");
+      const [rows] = await dbPool.query(
+        `SELECT id, name, file_path, file_type
+           FROM \`${dbName}\`.documents
+          WHERE id IN (${placeholders})
+            AND uploaded_by = ?
+            AND status = 'active'`,
+        [...docIds, userId],
+      );
+      const docs = rows as Array<{ id: string; name: string; file_path: string | null; file_type: string }>;
+      const validDocs = docs.filter((d) => {
+        if (!d.file_path) return false;
+        const abs = absoluteFromStorageRoot(env.storageRoot, d.file_path);
+        return isPathWithinStorageRoot(env.storageRoot, abs) && existsSync(abs);
+      });
+
+      if (validDocs.length === 0) {
+        return res.status(404).json({ message: "No downloadable files found for the selected documents" });
+      }
+
+      const archiver = (await import("archiver")).default;
+      const archive = archiver("zip", { zlib: { level: 6 } });
+
+      const timestamp = new Date().toISOString().slice(0, 10);
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="custodox-documents-${timestamp}.zip"`);
+
+      archive.pipe(res);
+
+      const usedNames = new Map<string, number>();
+      for (const d of validDocs) {
+        const abs = absoluteFromStorageRoot(env.storageRoot, d.file_path!);
+        const safeName = d.name.replace(/[\r\n]/g, "_").trim() || `document-${d.id}`;
+        const ext = path.extname(safeName);
+        const base = safeName.slice(0, safeName.length - ext.length);
+        const count = usedNames.get(safeName) ?? 0;
+        usedNames.set(safeName, count + 1);
+        const finalName = count === 0 ? safeName : `${base} (${count})${ext}`;
+        archive.file(abs, { name: finalName });
+      }
+
+      archive.on("error", (err) => {
+        if (!res.headersSent) res.status(500).json({ message: "ZIP generation failed" });
+        else res.end();
+        console.error("[user-bulk-download] archiver error:", err);
+      });
+
+      await archive.finalize();
+    } catch (error) {
+      if (!res.headersSent) {
+        const message = error instanceof Error ? error.message : "Failed to create ZIP archive";
+        res.status(500).json({ message });
+      }
     }
   },
 

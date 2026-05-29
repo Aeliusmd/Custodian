@@ -102,7 +102,6 @@ export const searchActiveReadyDocumentsForGlobalSearch = async (
        LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
        LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
       WHERE d.status = 'active'
-        AND d.ocr_status = 'ready'
         ${userFilter}
         AND LOWER(dmv.value) LIKE LOWER(?)
       ORDER BY d.created_at DESC
@@ -118,7 +117,6 @@ export const searchActiveReadyDocumentsForGlobalSearch = async (
        LEFT JOIN \`${dbName}\`.categories c ON c.id = d.category_id
        LEFT JOIN \`${dbName}\`.users u ON u.id = d.uploaded_by
       WHERE d.status = 'active'
-        AND d.ocr_status = 'ready'
         ${userFilter}
         AND (LOWER(d.name) LIKE LOWER(?) OR LOWER(COALESCE(c.name, '')) LIKE LOWER(?))
       ORDER BY d.created_at DESC

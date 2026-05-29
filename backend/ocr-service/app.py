@@ -26,7 +26,9 @@ from pathlib import Path
 
 import img2pdf
 import ocrmypdf
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import fitz  # PyMuPDF — renders PDF pages to PNG images for the page-by-page viewer
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel
 from pypdf import PdfReader
@@ -37,7 +39,8 @@ PORT = 8765
 UVICORN_LOG_LEVEL = "info"
 
 OCR_LANGUAGE = "eng"
-OCR_FORCE_OCR = True
+# Options: 'default' (error on existing text), 'skip' (skip pages with text), 'force' (force OCR), 'redo' (redo OCR)
+OCR_MODE = "skip"
 OCR_DESKEW = False
 OCR_SKIP_BIG_MB = 100
 
@@ -58,10 +61,16 @@ _executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_OCR, thread_name_prefi
 _ocr_semaphore = asyncio.Semaphore(MAX_CONCURRENT_OCR)
 
 
+class OcrPage(BaseModel):
+    page: int
+    text: str
+
+
 class OcrResponse(BaseModel):
     """Node accepts `text` or `markdown`; we send both as the same plain string."""
     text: str
     markdown: str
+    pages: list[OcrPage]
 
 
 # ---------------------------------------------------------------------------
@@ -80,15 +89,16 @@ def repair_pdf(input_file: str, repaired_file: str) -> bool:
         return False
 
 
-def extract_text_from_pdf(pdf_path: str) -> str:
-    """Read searchable text from the OCR'd PDF."""
+def extract_text_from_pdf(pdf_path: str) -> tuple[str, list[OcrPage]]:
+    """Read searchable text from the OCR'd PDF, one entry per page (1-based)."""
     reader = PdfReader(pdf_path)
-    parts: list[str] = []
-    for page in reader.pages:
+    pages: list[OcrPage] = []
+    for i, page in enumerate(reader.pages, start=1):
         t = page.extract_text()
         if t and t.strip():
-            parts.append(t.strip())
-    return "\n\n".join(parts).strip()
+            pages.append(OcrPage(page=i, text=t.strip()))
+    joined = "\n\n".join(p.text for p in pages).strip()
+    return joined, pages
 
 
 def bytes_look_like_pdf(data: bytes) -> bool:
@@ -138,7 +148,7 @@ def ensure_input_pdf(input_path: Path) -> Path:
 # Core OCR work — runs inside the thread pool
 # ---------------------------------------------------------------------------
 
-def _run_ocr_sync(raw: bytes, filename: str) -> str:
+def _run_ocr_sync(raw: bytes, filename: str) -> tuple[str, list[OcrPage]]:
     """
     Blocking OCR pipeline executed in a worker thread.
     Returns extracted plain text.
@@ -158,20 +168,20 @@ def _run_ocr_sync(raw: bytes, filename: str) -> str:
             ocrmypdf.ocr(
                 source_pdf,
                 str(final_pdf),
-                force_ocr=OCR_FORCE_OCR,
+                mode=OCR_MODE,
                 deskew=OCR_DESKEW,
                 language=OCR_LANGUAGE,
                 skip_big=OCR_SKIP_BIG_MB,
                 output_type="pdf",
             )
 
-            text = extract_text_from_pdf(str(final_pdf))
+            text, pages = extract_text_from_pdf(str(final_pdf))
             if not text:
                 raise HTTPException(
                     status_code=422,
                     detail="OCR finished but no extractable text was found in the PDF",
                 )
-            return text
+            return text, pages
         finally:
             try:
                 in_path.unlink(missing_ok=True)
@@ -206,9 +216,44 @@ async def ocr_endpoint(file: UploadFile = File(...)) -> OcrResponse:
     # (the HTTP connection is held open) until a slot is free.
     async with _ocr_semaphore:
         loop = asyncio.get_running_loop()
-        text = await loop.run_in_executor(_executor, _run_ocr_sync, raw, filename)
+        text, pages = await loop.run_in_executor(_executor, _run_ocr_sync, raw, filename)
 
-    return OcrResponse(text=text, markdown=text)
+    return OcrResponse(text=text, markdown=text, pages=pages)
+
+
+@app.post("/render-page")
+async def render_page_endpoint(
+    file: UploadFile = File(...),
+    page: int = Form(1),
+    dpi: int = Form(150),
+) -> Response:
+    """
+    Render a single PDF page to a PNG image (for the page-by-page document viewer).
+    The Node backend calls this on demand and caches the result on disk, so each
+    page is rasterized at most once.
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if not bytes_look_like_pdf(raw):
+        raise HTTPException(status_code=415, detail="Only PDF files can be rendered to page images")
+
+    page_no = max(1, int(page))
+    render_dpi = min(300, max(72, int(dpi)))
+
+    def _render() -> bytes:
+        doc = fitz.open(stream=raw, filetype="pdf")
+        try:
+            if page_no > doc.page_count:
+                raise HTTPException(status_code=404, detail="Page out of range")
+            pix = doc.load_page(page_no - 1).get_pixmap(dpi=render_dpi)
+            return pix.tobytes("png")
+        finally:
+            doc.close()
+
+    loop = asyncio.get_running_loop()
+    png_bytes = await loop.run_in_executor(_executor, _render)
+    return Response(content=png_bytes, media_type="image/png")
 
 
 # ---------------------------------------------------------------------------

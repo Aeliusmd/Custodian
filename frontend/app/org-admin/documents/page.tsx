@@ -622,6 +622,21 @@ export default function AllDocumentsPage() {
                           <div className="min-w-0">
                             <div className="text-sm font-medium text-[#1a2340] truncate max-w-[220px]">{doc.name}</div>
                             <div className="text-xs text-gray-400">{doc.fileSize} · {doc.fileType}</div>
+                            {doc.ocrStatus === 'Pending' && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-500 border border-blue-200 mt-0.5">
+                                <i className="ri-loader-4-line animate-spin" />Processing
+                              </span>
+                            )}
+                            {doc.ocrStatus === 'Ready' && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 mt-0.5">
+                                <i className="ri-search-line" />Searchable
+                              </span>
+                            )}
+                            {doc.ocrStatus === 'Failed' && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-50 text-red-500 border border-red-200 mt-0.5">
+                                <i className="ri-error-warning-line" />Processing failed
+                              </span>
+                            )}
                           </div>
                         </div>
 

@@ -5,13 +5,21 @@ import { useEffect, useRef, useState, useCallback, type KeyboardEvent, type Reac
 const TEAL = '#0097B2';
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
 
+interface MetadataMatch { fieldName: string; value: string }
+interface ContentMatch { pageNumber: number; snippet: string; snippetHtml?: string }
+
 interface SearchResult {
   id: string;
   documentName: string;
   snippet: string;
+  snippetHtml?: string;
   category: string;
   uploadDate: string;
   uploadedBy: string;
+  matchType: 'metadata' | 'content' | 'both';
+  pageNumber?: number;
+  contentMatches?: ContentMatch[];
+  matchedMetadata?: MetadataMatch[];
   keywords: string[];
 }
 
@@ -39,20 +47,53 @@ function highlightText(text: string, keyword: string): ReactElement {
           <mark key={i} className="bg-yellow-200 text-yellow-900 font-semibold rounded px-0.5">{part}</mark>
         ) : (
           <span key={i}>{part}</span>
-        )
+        ),
       )}
     </>
   );
 }
 
-export default function GlobalSearchPage() {
+/** Allow only <mark> tags — strips any other HTML from OCR-extracted content. */
+function sanitizeSnippetHtml(html: string): string {
+  return html.replace(/<(?!\/?mark\b)[^>]+>/gi, '');
+}
+
+function SnippetBlock({ result, keyword }: { result: SearchResult; keyword: string }) {
+  if (result.snippetHtml && (result.matchType === 'content' || result.matchType === 'both')) {
+    return (
+      <p
+        className="text-sm text-gray-600 leading-relaxed line-clamp-3"
+        dangerouslySetInnerHTML={{ __html: sanitizeSnippetHtml(result.snippetHtml) }}
+      />
+    );
+  }
+  return (
+    <p className="text-sm text-gray-600 leading-relaxed line-clamp-3">
+      {highlightText(result.snippet, keyword)}
+    </p>
+  );
+}
+
+function matchTypeLabel(t: SearchResult['matchType']) {
+  if (t === 'content') return 'In document text';
+  if (t === 'both') return 'Metadata & content';
+  return 'Metadata';
+}
+
+export default function UserGlobalSearchPage() {
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [selectedDoc, setSelectedDoc] = useState<SearchResult | null>(null);
+  const [downloadBusy, setDownloadBusy] = useState(false);
+  const [actionMessage, setActionMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const showMsg = (text: string, type: 'success' | 'error' = 'success') => {
+    setActionMessage({ text, type });
+    window.setTimeout(() => setActionMessage(null), 3000);
+  };
 
   const doSearch = useCallback(async (q: string) => {
     if (!q.trim()) return;
@@ -65,10 +106,11 @@ export default function GlobalSearchPage() {
         credentials: 'include',
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { message?: string };
+        const body = (await res.json().catch(() => ({}))) as { message?: string };
         throw new Error(body.message ?? `Search failed (${res.status})`);
       }
-      setResults(await res.json() as SearchResult[]);
+      const data = (await res.json()) as { query: string; results?: SearchResult[]; total: number };
+      setResults(data.results ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Search failed');
     } finally {
@@ -76,20 +118,55 @@ export default function GlobalSearchPage() {
     }
   }, []);
 
+  const handleDownload = useCallback(async (result: SearchResult) => {
+    if (downloadBusy) return;
+    setDownloadBusy(true);
+    try {
+      const url = `${API_BASE_URL}/protected/user/documents/${encodeURIComponent(result.id)}/file`;
+      const response = await fetch(url, { credentials: 'include' });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { message?: string };
+        showMsg(body.message ?? 'Download failed', 'error');
+        return;
+      }
+      const blob = await response.blob();
+      const cd = response.headers.get('Content-Disposition');
+      let filename = result.documentName;
+      const quoted = cd?.match(/filename="([^"]+)"/i);
+      const star = cd?.match(/filename\*=UTF-8''([^;\s]+)/i);
+      const raw = quoted?.[1] ?? star?.[1];
+      if (raw) { try { filename = decodeURIComponent(raw); } catch { filename = raw; } }
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = filename;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+      showMsg(`Downloaded "${filename}"`);
+    } catch {
+      showMsg('Download failed.', 'error');
+    } finally {
+      setDownloadBusy(false);
+    }
+  }, [downloadBusy]);
+
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') void doSearch(query);
   };
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+  useEffect(() => { inputRef.current?.focus(); }, []);
 
   return (
     <div className="px-4 py-5 sm:p-6 min-h-full font-inter">
       {/* Header */}
       <div className="mb-8 flex flex-col gap-1">
         <h1 className="text-xl font-bold text-[#1a2340]">Global Search</h1>
-        <p className="text-sm text-gray-400 mt-0.5">Search documents by name and category</p>
+        <p className="text-sm text-gray-400 mt-0.5">
+          Search your documents by content and metadata
+        </p>
       </div>
 
       {/* Search Bar */}
@@ -101,11 +178,16 @@ export default function GlobalSearchPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search documents by name or category..."
+            placeholder="Search document content and metadata..."
             className="flex-1 min-w-0 outline-none text-base text-[#1a2340] bg-transparent placeholder-gray-300"
           />
           {query && (
-            <button onClick={() => { setQuery(''); setSubmitted(''); setResults([]); }} aria-label="Clear search" title="Clear search" className="text-gray-300 hover:text-gray-500 cursor-pointer">
+            <button
+              onClick={() => { setQuery(''); setSubmitted(''); setResults([]); }}
+              aria-label="Clear search"
+              title="Clear search"
+              className="text-gray-300 hover:text-gray-500 cursor-pointer"
+            >
               <i className="ri-close-line text-lg" />
             </button>
           )}
@@ -119,11 +201,22 @@ export default function GlobalSearchPage() {
         </div>
       </div>
 
+      {/* Toast */}
+      {actionMessage && (
+        <div className={`max-w-3xl mx-auto mb-4 rounded-lg border px-4 py-3 text-sm ${
+          actionMessage.type === 'error'
+            ? 'border-red-200 bg-red-50 text-red-600'
+            : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+        }`}>
+          {actionMessage.text}
+        </div>
+      )}
+
       {error && (
         <div className="max-w-3xl mx-auto mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
       )}
 
-      {/* Loading State */}
+      {/* Skeleton */}
       {isLoading && (
         <div className="max-w-3xl mx-auto">
           {[1, 2, 3].map((i) => (
@@ -148,7 +241,9 @@ export default function GlobalSearchPage() {
             <i className="ri-file-search-line text-2xl text-gray-300" />
           </div>
           <h3 className="text-base font-semibold text-[#1a2340] mb-2">No results found</h3>
-          <p className="text-sm text-gray-400">No documents found for &ldquo;<strong>{submitted}</strong>&rdquo;. Try a different keyword.</p>
+          <p className="text-sm text-gray-400">
+            No documents matched &ldquo;<strong>{submitted}</strong>&rdquo; in text or metadata. Try a different keyword.
+          </p>
         </div>
       )}
 
@@ -156,14 +251,13 @@ export default function GlobalSearchPage() {
       {!isLoading && results.length > 0 && (
         <div className="max-w-3xl mx-auto">
           <p className="text-sm text-gray-400 mb-4">
-            Found <span className="font-semibold text-[#1a2340]">{results.length}</span> result{results.length !== 1 ? 's' : ''} for <span className="font-semibold text-[#1a2340]">&ldquo;{submitted}&rdquo;</span>
+            Found <span className="font-semibold text-[#1a2340]">{results.length}</span> document{results.length !== 1 ? 's' : ''} for &ldquo;<span className="font-semibold text-[#1a2340]">{submitted}</span>&rdquo;
           </p>
           <div className="space-y-4">
             {results.map((result) => (
               <div
                 key={result.id}
-                onClick={() => setSelectedDoc(result)}
-                className="bg-white rounded-2xl border border-gray-200 p-5 hover:border-[#0097B2]/40 transition-all cursor-pointer group"
+                className="bg-white rounded-2xl border border-gray-200 p-5 hover:border-[#0097B2]/40 transition-all"
               >
                 <div className="flex items-start gap-4">
                   <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `${TEAL}15` }}>
@@ -171,76 +265,78 @@ export default function GlobalSearchPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2 mb-1.5">
-                      <h3 className="text-sm font-bold text-[#1a2340] group-hover:text-[#0097B2] transition-colors">
+                      <h3 className="text-sm font-bold text-[#1a2340]">
                         {highlightText(result.documentName, submitted)}
                       </h3>
-                      <i className="ri-external-link-line text-gray-300 group-hover:text-[#0097B2] flex-shrink-0 transition-colors" />
+                      <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 whitespace-nowrap flex-shrink-0">
+                        {matchTypeLabel(result.matchType)}
+                      </span>
                     </div>
-                    <div className="flex items-center gap-3 mb-3">
+
+                    <div className="flex flex-wrap items-center gap-3 mb-3">
                       <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${CATEGORY_COLORS[result.category] ?? 'bg-gray-100 text-gray-600'}`}>
                         {highlightText(result.category, submitted)}
                       </span>
-                      <span className="text-xs text-gray-400">
-                        <i className="ri-calendar-line mr-1" />{result.uploadDate}
-                      </span>
-                      <span className="text-xs text-gray-400">
-                        <i className="ri-user-line mr-1" />{result.uploadedBy}
-                      </span>
+                      {result.uploadDate && (
+                        <span className="text-xs text-gray-400">
+                          <i className="ri-calendar-line mr-1" />{result.uploadDate}
+                        </span>
+                      )}
                     </div>
-                    <p className="text-sm text-gray-500 leading-relaxed line-clamp-2">{result.snippet}</p>
+
+                    {(result.matchType === 'content' || result.matchType === 'both') && result.snippet && (
+                      <div className="mb-3 rounded-xl bg-gray-50 border border-gray-100 px-3 py-2.5">
+                        <SnippetBlock result={result} keyword={submitted} />
+                        {result.pageNumber && (
+                          <p className="text-xs mt-2 flex items-center gap-1" style={{ color: TEAL }}>
+                            <i className="ri-book-open-line" />
+                            Found on page {result.pageNumber}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {(result.contentMatches?.length ?? 0) > 1 && (
+                      <div className="mb-3 flex flex-wrap gap-2">
+                        {result.contentMatches!.map((m) => (
+                          <span
+                            key={`${result.id}-p${m.pageNumber}`}
+                            className="text-xs px-2.5 py-1 rounded-full border border-[#0097B2]/30 text-[#0097B2]"
+                          >
+                            Page {m.pageNumber}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {(result.matchedMetadata?.length ?? 0) > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        {result.matchedMetadata!.map((m) => (
+                          <span
+                            key={`${m.fieldName}-${m.value}`}
+                            className="text-xs font-medium px-2.5 py-1 rounded-full bg-[#0097B2]/10 text-[#0097B2] border border-[#0097B2]/20"
+                          >
+                            {m.fieldName}: {highlightText(m.value, submitted)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={downloadBusy}
+                        onClick={() => void handleDownload(result)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer disabled:opacity-60"
+                      >
+                        <i className="ri-download-2-line" />
+                        Download
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-      )}
-
-      {/* Document Preview Modal */}
-      {selectedDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setSelectedDoc(null)} />
-          <div className="relative bg-white rounded-2xl w-full max-w-2xl mx-4 overflow-hidden max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: `${TEAL}18` }}>
-                  <i className="ri-file-pdf-2-line text-base" style={{ color: TEAL }} />
-                </div>
-                <div className="min-w-0">
-                  <h2 className="text-sm font-bold text-[#1a2340] truncate max-w-[380px]">{selectedDoc.documentName}</h2>
-                  <p className="text-xs text-gray-400">{selectedDoc.category} · {selectedDoc.uploadedBy}</p>
-                </div>
-              </div>
-              <button onClick={() => setSelectedDoc(null)} aria-label="Close preview" title="Close preview" className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 cursor-pointer transition-colors">
-                <i className="ri-close-line" />
-              </button>
-            </div>
-            <div className="p-6 overflow-y-auto">
-              <div className="mb-4">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Document Info</p>
-                <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
-                  <p className="text-sm text-gray-600 leading-relaxed">{selectedDoc.snippet}</p>
-                </div>
-              </div>
-              <div className="mb-4">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Matched Keywords</p>
-                <div className="flex flex-wrap gap-2">
-                  {selectedDoc.keywords.map((kw) => (
-                    <span key={kw} className="text-xs px-3 py-1 rounded-full bg-yellow-100 text-yellow-800 font-medium">{kw}</span>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="px-6 py-4 border-t border-gray-100 flex gap-3 flex-shrink-0">
-              <button className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap" type="button">
-                <i className="ri-download-2-line" />
-                Download
-              </button>
-              <button className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-medium transition-colors cursor-pointer whitespace-nowrap" style={{ background: TEAL }} type="button">
-                <i className="ri-eye-line" />
-                Open Document
-              </button>
-            </div>
           </div>
         </div>
       )}

@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { DocumentRecord, DocumentVersion } from '@/mocks/documents';
 import {
   fileExtension,
@@ -58,9 +57,13 @@ export default function DocumentViewerModal({
   const [pageImageSrc, setPageImageSrc] = useState<string | null>(null);
   const [pageImageLoading, setPageImageLoading] = useState(false);
   const [pageImageError, setPageImageError] = useState(false);
+  // When server-side preview PNGs don't exist (preview_page_count is set from OCR
+  // text pages, not rasterized images), fall back to client-side rendering.
+  const [pageImagesUnavailable, setPageImagesUnavailable] = useState(false);
 
   const previewPageCount = Math.max(0, Math.floor(doc.previewPageCount ?? 0));
-  const usePageImages = previewPageCount > 0 && typeof previewImageUrlForPage === 'function';
+  const usePageImages =
+    previewPageCount > 0 && typeof previewImageUrlForPage === 'function' && !pageImagesUnavailable;
 
   const previewBlobUrlRef = useRef<string | null>(null);
 
@@ -69,13 +72,6 @@ export default function DocumentViewerModal({
     : fileDownloadUrl
       ? inferClientPreviewMode(doc.name, doc.fileType)
       : 'no-file-url';
-
-  const pdfRef = useRef<PDFDocumentProxy | null>(null);
-  const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pdfRenderTaskRef = useRef<{ cancel?: () => void } | null>(null);
-  const [pdfLoading, setPdfLoading] = useState(false);
-  const [pdfError, setPdfError] = useState(false);
-  const [pdfNumPages, setPdfNumPages] = useState(0);
 
   const mediaBlobUrlRef = useRef<string | null>(null);
   const [mediaBlobUrl, setMediaBlobUrl] = useState<string | null>(null);
@@ -102,18 +98,17 @@ export default function DocumentViewerModal({
 
   const totalPages = usePageImages
     ? previewPageCount
-    : clientMode === 'pdf-canvas' && pdfNumPages > 0
-      ? pdfNumPages
-      : clientMode === 'image' || clientMode === 'video' || clientMode === 'audio' || clientMode === 'unsupported-binary' || clientMode === 'no-file-url'
+    : clientMode === 'pdf-canvas' || clientMode === 'image' || clientMode === 'video' || clientMode === 'audio' || clientMode === 'unsupported-binary' || clientMode === 'no-file-url'
+      ? 1
+      : clientMode === 'text'
         ? 1
-        : clientMode === 'text'
-          ? 1
-          : textTotalPages;
+        : textTotalPages;
 
   useEffect(() => {
     queueMicrotask(() => {
       setCurrentPage(0);
       setZoom(100);
+      setPageImagesUnavailable(false);
     });
   }, [doc.id]);
 
@@ -147,7 +142,15 @@ export default function DocumentViewerModal({
         setPageImageSrc(objectUrl);
       })
       .catch(() => {
-        if (!cancelled) setPageImageError(true);
+        if (cancelled) return;
+        // Server preview image missing → fall back to client-side rendering
+        // (PDF.js canvas for PDFs, native <img>/<video> for media, etc.) when a
+        // downloadable file URL is available; otherwise surface the page error.
+        if (fileDownloadUrl) {
+          setPageImagesUnavailable(true);
+        } else {
+          setPageImageError(true);
+        }
       })
       .finally(() => {
         if (!cancelled) setPageImageLoading(false);
@@ -162,124 +165,8 @@ export default function DocumentViewerModal({
     };
   }, [doc.id, currentPage, usePageImages, previewImageUrlForPage]);
 
-  // PDF.js: load document (cookie-auth file → ArrayBuffer).
-  useEffect(() => {
-    if (clientMode !== 'pdf-canvas' || !fileDownloadUrl) {
-      pdfRenderTaskRef.current?.cancel?.();
-      pdfRenderTaskRef.current = null;
-      void pdfRef.current?.destroy().catch(() => {});
-      pdfRef.current = null;
-      queueMicrotask(() => {
-        setPdfNumPages(0);
-        setPdfLoading(false);
-        setPdfError(false);
-      });
-      return undefined;
-    }
-
-    let cancelled = false;
-    queueMicrotask(() => {
-      setPdfLoading(true);
-      setPdfError(false);
-      setPdfNumPages(0);
-    });
-
-    void (async () => {
-      try {
-        const pdfjs = await import('pdfjs-dist');
-        const { getDocument, GlobalWorkerOptions, version } = pdfjs;
-        GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
-
-        const res = await fetch(fileDownloadUrl, { credentials: 'include' });
-        if (!res.ok) throw new Error(String(res.status));
-        const raw = await res.arrayBuffer();
-        if (cancelled) return;
-
-        const data = new Uint8Array(raw);
-        const loadingTask = getDocument({
-          data,
-          useSystemFonts: true,
-          cMapUrl: `https://unpkg.com/pdfjs-dist@${version}/cmaps/`,
-          cMapPacked: true,
-          standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${version}/standard_fonts/`,
-        });
-        const pdf = await loadingTask.promise;
-        if (cancelled) {
-          void pdf.destroy().catch(() => {});
-          return;
-        }
-        void pdfRef.current?.destroy().catch(() => {});
-        pdfRef.current = pdf;
-        setPdfNumPages(pdf.numPages);
-      } catch {
-        if (!cancelled) setPdfError(true);
-      } finally {
-        if (!cancelled) setPdfLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      pdfRenderTaskRef.current?.cancel?.();
-      pdfRenderTaskRef.current = null;
-      void pdfRef.current?.destroy().catch(() => {});
-      pdfRef.current = null;
-    };
-  }, [clientMode, fileDownloadUrl, doc.id]);
-
-  // PDF.js: render current page to canvas.
-  useEffect(() => {
-    if (clientMode !== 'pdf-canvas' || !pdfRef.current || !pdfCanvasRef.current || pdfNumPages < 1) {
-      return undefined;
-    }
-
-    const pdf = pdfRef.current;
-    const canvas = pdfCanvasRef.current;
-    const pageNumber = Math.min(Math.max(currentPage + 1, 1), pdf.numPages);
-
-    let cancelled = false;
-
-    void (async () => {
-      pdfRenderTaskRef.current?.cancel?.();
-      pdfRenderTaskRef.current = null;
-      try {
-        const page = await pdf.getPage(pageNumber);
-        if (cancelled) return;
-        const baseW = 816;
-        const viewport1 = page.getViewport({ scale: 1 });
-        const scale = (baseW / viewport1.width) * (zoom / 100);
-        const viewport = page.getViewport({ scale });
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-        const w = Math.floor(viewport.width);
-        const h = Math.floor(viewport.height);
-        canvas.width = Math.floor(w * dpr);
-        canvas.height = Math.floor(h * dpr);
-        canvas.style.width = `${w}px`;
-        canvas.style.height = `${h}px`;
-        const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined;
-        const task = page.render({
-          canvas,
-          canvasContext: ctx,
-          viewport,
-          transform,
-        });
-        pdfRenderTaskRef.current = task;
-        await task.promise;
-      } catch {
-        // RenderingCancelledException on fast page flip — ignore.
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      pdfRenderTaskRef.current?.cancel?.();
-      pdfRenderTaskRef.current = null;
-    };
-  }, [clientMode, currentPage, zoom, pdfNumPages, doc.id]);
-
-  // Image / video / audio: single blob URL from authenticated file endpoint.
+  // PDF / image / video / audio: single blob URL from authenticated file endpoint.
+  // PDFs render in the browser's built-in viewer via an <iframe> (no pdfjs-dist).
   useEffect(() => {
     if (!fileDownloadUrl || clientMode === 'no-file-url') {
       if (mediaBlobUrlRef.current) {
@@ -293,7 +180,12 @@ export default function DocumentViewerModal({
       });
       return undefined;
     }
-    if (clientMode !== 'image' && clientMode !== 'video' && clientMode !== 'audio') {
+    if (
+      clientMode !== 'image' &&
+      clientMode !== 'video' &&
+      clientMode !== 'audio' &&
+      clientMode !== 'pdf-canvas'
+    ) {
       if (mediaBlobUrlRef.current) {
         URL.revokeObjectURL(mediaBlobUrlRef.current);
         mediaBlobUrlRef.current = null;
@@ -557,7 +449,7 @@ export default function DocumentViewerModal({
             <button
               type="button"
               onClick={handleZoomOut}
-              disabled={clientMode === 'video' || clientMode === 'audio'}
+              disabled={clientMode === 'video' || clientMode === 'audio' || clientMode === 'pdf-canvas'}
               className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg bg-white/10 text-white transition-colors hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-30"
               aria-label="Zoom out"
             >
@@ -567,7 +459,7 @@ export default function DocumentViewerModal({
             <button
               type="button"
               onClick={handleZoomIn}
-              disabled={clientMode === 'video' || clientMode === 'audio'}
+              disabled={clientMode === 'video' || clientMode === 'audio' || clientMode === 'pdf-canvas'}
               className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg bg-white/10 text-white transition-colors hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-30"
               aria-label="Zoom in"
             >
@@ -648,23 +540,24 @@ export default function DocumentViewerModal({
               </div>
             </div>
           ) : clientMode === 'pdf-canvas' ? (
-            <div className="flex w-full max-w-[100%] flex-col items-center justify-center gap-4 py-4">
-              {pdfLoading && (
+            <div className="flex h-full w-full flex-col items-center justify-center gap-4">
+              {mediaLoading && (
                 <p className="text-white/70 text-sm">
                   <i className="ri-loader-4-line animate-spin mr-2 inline-block" aria-hidden />
                   Loading PDF…
                 </p>
               )}
-              {pdfError && !pdfLoading && (
+              {mediaError && !mediaLoading && (
                 <p className="max-w-md text-center text-red-300 text-sm">
-                  Could not load this PDF in the browser. Try downloading the file, or wait if the server is still
-                  generating page previews.
+                  Could not load this PDF. Use the Download button above to open it in your PDF reader.
                 </p>
               )}
-              {!pdfError && !pdfLoading && pdfNumPages > 0 && (
-                <div className="max-w-full overflow-auto rounded-lg bg-neutral-900/40 p-2 shadow-2xl ring-1 ring-white/10">
-                  <canvas ref={pdfCanvasRef} className="block rounded bg-white" />
-                </div>
+              {mediaBlobUrl && !mediaError && (
+                <iframe
+                  src={mediaBlobUrl}
+                  title={doc.name}
+                  className="h-full w-full rounded-lg border-0 bg-white shadow-2xl"
+                />
               )}
             </div>
           ) : clientMode === 'image' ? (
@@ -924,36 +817,6 @@ export default function DocumentViewerModal({
             </div>
           </div>
         )}
-      </div>
-
-      {/* Bottom thumbnail strip — centered like a filmstrip */}
-      <div className="flex max-w-full shrink-0 justify-center gap-2 overflow-x-auto overscroll-x-contain border-t border-white/10 bg-[#1a2340] px-4 py-3 sm:px-6">
-        {Array.from({ length: totalPages }, (_, idx) => (
-          <button
-            key={idx}
-            type="button"
-            onClick={() => setCurrentPage(idx)}
-            className="group flex flex-shrink-0 cursor-pointer flex-col items-center gap-1"
-          >
-            <div
-              className={`flex h-20 w-14 flex-col items-center justify-center rounded-md border-2 transition-all ${
-                currentPage === idx ? 'border-[#0097B2]' : 'border-white/10 hover:border-white/30'
-              }`}
-              style={{ background: currentPage === idx ? `${TEAL}20` : 'rgba(255,255,255,0.05)' }}
-            >
-              {usePageImages || clientMode === 'pdf-canvas' ? (
-                <span className="text-lg font-semibold text-white/40">{idx + 1}</span>
-              ) : (
-                <div className="w-full space-y-1 px-2">
-                  {[100, 80, 90, 70, 85].map((w, i) => (
-                    <div key={i} className="h-0.5 rounded-full bg-white/20" style={{ width: `${w}%` }} />
-                  ))}
-                </div>
-              )}
-            </div>
-            <span className={`text-[9px] ${currentPage === idx ? 'text-white' : 'text-white/30'}`}>{idx + 1}</span>
-          </button>
-        ))}
       </div>
     </div>
   );

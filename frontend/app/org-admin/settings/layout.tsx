@@ -35,14 +35,14 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
   const pathname = usePathname();
 
   return (
-    <div className="flex h-full min-h-0 flex-col lg:flex-row bg-[#f8f9fb] font-inter">
-      <aside className="w-full lg:w-64 flex-shrink-0 bg-white border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col py-4 lg:py-6">
+    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col overflow-hidden bg-[#f8f9fb] font-inter lg:flex-row">
+      <aside className="w-full flex-shrink-0 bg-white border-b border-gray-200 flex flex-col py-4 lg:h-full lg:w-64 lg:border-b-0 lg:border-r lg:py-6">
         <div className="px-4 sm:px-5 mb-3 lg:mb-6">
           <h1 className="text-lg font-bold text-[#1a2340]">Settings</h1>
           <p className="text-xs text-gray-400 mt-0.5">Manage your account and preferences</p>
         </div>
 
-        <nav className="flex-1 px-3 space-y-1 lg:space-y-1 overflow-x-auto lg:overflow-x-visible">
+        <nav className="flex-1 px-3 space-y-1 lg:space-y-1 overflow-x-auto lg:overflow-x-visible lg:overflow-y-auto">
           <div className="flex gap-2 lg:block lg:space-y-1 min-w-max lg:min-w-0">
           {settingsTabs.map((tab) => {
             const active = pathname === tab.path;
@@ -86,7 +86,7 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
         </nav>
       </aside>
 
-      <div className="flex-1 overflow-y-auto">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
     </div>
   );
 }

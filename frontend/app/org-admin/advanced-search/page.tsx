@@ -6,7 +6,7 @@ import { type DocumentRecord } from '@/mocks/documents';
 import { downloadOrgAdminDocumentFile } from '@/app/org-admin/documents/lib/documentFileDownload';
 
 const TEAL = '#0097B2';
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
 
 interface CategoryField {
   id: string;
@@ -33,6 +33,7 @@ interface SearchFilters {
   uploadedBy: string;
   dateFrom: string;
   dateTo: string;
+  keyword: string;
   metadata: Record<string, string>;
 }
 
@@ -57,7 +58,7 @@ export default function AdvancedSearchPage() {
   const [uploaders, setUploaders] = useState<OrgUser[]>([]);
   const [loadingFilters, setLoadingFilters] = useState(true);
   const [filters, setFilters] = useState<SearchFilters>({
-    docName: '', category: '', uploadedBy: '', dateFrom: '', dateTo: '', metadata: {},
+    docName: '', category: '', uploadedBy: '', dateFrom: '', dateTo: '', keyword: '', metadata: {},
   });
   const [results, setResults] = useState<DocumentRecord[] | null>(null);
   const [searched, setSearched] = useState(false);
@@ -113,6 +114,7 @@ export default function AdvancedSearchPage() {
           uploadedBy: filters.uploadedBy,
           dateFrom: filters.dateFrom,
           dateTo: filters.dateTo,
+          keyword: filters.keyword,
           metadata: filters.metadata,
         }),
       });
@@ -134,7 +136,7 @@ export default function AdvancedSearchPage() {
   };
 
   const handleReset = () => {
-    setFilters({ docName: '', category: '', uploadedBy: '', dateFrom: '', dateTo: '', metadata: {} });
+    setFilters({ docName: '', category: '', uploadedBy: '', dateFrom: '', dateTo: '', keyword: '', metadata: {} });
     setResults(null);
     setSearched(false);
     setSearchError('');
@@ -183,6 +185,7 @@ export default function AdvancedSearchPage() {
     filters.uploadedBy,
     filters.dateFrom,
     filters.dateTo,
+    filters.keyword,
     ...Object.values(filters.metadata).filter(Boolean),
   ].filter(Boolean).length;
 
@@ -302,6 +305,17 @@ export default function AdvancedSearchPage() {
                   className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-600 outline-none focus:border-[#0097B2] bg-white cursor-pointer transition-all"
                 />
               </div>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Keyword</label>
+              <input
+                value={filters.keyword}
+                onChange={(e) => setFilters((prev) => ({ ...prev, keyword: e.target.value }))}
+                onKeyDown={(e) => e.key === 'Enter' && void handleSearch()}
+                placeholder="Search across document name, category, and metadata values..."
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-[#1a2340] outline-none focus:border-[#0097B2] transition-all"
+              />
             </div>
           </div>
 

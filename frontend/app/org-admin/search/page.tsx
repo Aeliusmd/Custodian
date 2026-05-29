@@ -6,7 +6,7 @@ import { type DocumentRecord } from '@/mocks/documents';
 import { downloadOrgAdminDocumentFile } from '@/app/org-admin/documents/lib/documentFileDownload';
 
 const TEAL = '#0097B2';
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3351';
 
 interface MetadataMatch {
   fieldName: string;

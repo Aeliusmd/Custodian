@@ -47,9 +47,9 @@ export default function AllDocumentsPage() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
   };
 
-  const loadDocuments = useCallback(async () => {
+  const loadDocuments = useCallback(async (opts?: { silent?: boolean }) => {
     try {
-      setLoading(true);
+      if (!opts?.silent) setLoading(true);
       setError('');
       const [activeRes, archivedRes] = await Promise.all([
         fetch(`${API_BASE_URL}/protected/user/documents`, { credentials: 'include' }),
@@ -70,11 +70,18 @@ export default function AllDocumentsPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load documents');
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => { void loadDocuments(); }, [loadDocuments]);
+
+  useEffect(() => {
+    const hasPending = documents.some((d) => d.ocrStatus === 'Pending');
+    if (!hasPending) return undefined;
+    const timer = setInterval(() => { void loadDocuments({ silent: true }); }, 8000);
+    return () => clearInterval(timer);
+  }, [documents, loadDocuments]);
 
   const filtered = documents.filter((d) => {
     const q = search.toLowerCase();
@@ -214,12 +221,62 @@ export default function AllDocumentsPage() {
     }
   };
 
-  const handleBulkDownload = () => showToast(`Downloading ${selected.size} files as ZIP...`);
-  const handleDownload = (doc: DocumentRecord) => {
-    showToast(`Downloading "${doc.name}"...`);
+  const handleDownload = async (doc: DocumentRecord) => {
     setActiveMenu(null);
     setActiveMenuPosition(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/protected/user/documents/${encodeURIComponent(doc.id)}/file`, {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = doc.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`Downloaded "${doc.name}"`);
+    } catch {
+      showToast(`Failed to download "${doc.name}"`, 'error');
+    }
   };
+
+  const handleBulkDownload = async () => {
+    const ids = Array.from(selected);
+    showToast(`Preparing ${ids.length} files…`);
+    try {
+      const res = await fetch(`${API_BASE_URL}/protected/user/documents/bulk-download`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error('Bulk download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `custodox-documents-${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`Downloaded ${ids.length} file${ids.length > 1 ? 's' : ''} as ZIP`);
+    } catch {
+      showToast('Failed to download files', 'error');
+    }
+  };
+
+  const previewImageUrlForPage = useCallback(
+    (pageOneBased: number) => {
+      if (!viewerDoc?.id) return '';
+      return `${API_BASE_URL}/protected/user/documents/${encodeURIComponent(viewerDoc.id)}/preview/${pageOneBased}`;
+    },
+    [viewerDoc],
+  );
 
   const selectedDocs = documents.filter((d) => selected.has(d.id));
   const clearFilters = () => { setFilterCategory(''); setFilterVisibility(''); setFilterUploader(''); setFilterDateFrom(''); setFilterDateTo(''); setSearch(''); };
@@ -313,7 +370,7 @@ export default function AllDocumentsPage() {
           <button onClick={() => { setModal('share'); setActiveDoc(null); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-medium transition-all cursor-pointer whitespace-nowrap">
             <i className="ri-share-line" /> Share
           </button>
-          <button onClick={handleBulkDownload} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-medium transition-all cursor-pointer whitespace-nowrap">
+          <button onClick={() => void handleBulkDownload()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-medium transition-all cursor-pointer whitespace-nowrap">
             <i className="ri-download-2-line" /> Download ZIP
           </button>
           <button onClick={() => void handleBulkArchive()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-sm font-medium transition-all cursor-pointer whitespace-nowrap hover:opacity-90" style={{ background: '#d97706' }}>
@@ -376,6 +433,21 @@ export default function AllDocumentsPage() {
                             <div className="min-w-0">
                               <div className="text-sm font-medium text-[#1a2340] truncate max-w-[220px] group-hover/doc:text-[#0097B2] transition-colors">{doc.name}</div>
                               <div className="text-xs text-gray-400">{doc.fileSize} · {doc.fileType}</div>
+                              {doc.ocrStatus === 'Pending' && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-500 border border-blue-200 mt-0.5">
+                                  <i className="ri-loader-4-line animate-spin" />Processing
+                                </span>
+                              )}
+                              {doc.ocrStatus === 'Ready' && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 mt-0.5">
+                                  <i className="ri-search-line" />Searchable
+                                </span>
+                              )}
+                              {doc.ocrStatus === 'Failed' && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-50 text-red-500 border border-red-200 mt-0.5">
+                                  <i className="ri-error-warning-line" />Processing failed
+                                </span>
+                              )}
                             </div>
                           </div>
                           <div className="pointer-events-none absolute left-0 top-full z-30 mt-3 w-44 origin-top-left opacity-0 invisible translate-y-1 transition-all duration-150 group-hover/name:opacity-100 group-hover/name:visible group-hover/name:translate-y-0">
@@ -448,7 +520,7 @@ export default function AllDocumentsPage() {
                                 <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-share-forward-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
                                 <span className="font-medium">Share</span>
                               </button>
-                              <button onClick={() => handleDownload(doc)} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
+                              <button onClick={() => void handleDownload(doc)} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#0097B2]/5 hover:text-[#0097B2] transition-colors cursor-pointer group/item">
                                 <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 group-hover/item:bg-[#0097B2]/10 transition-colors flex-shrink-0"><i className="ri-download-2-line text-xs text-gray-500 group-hover/item:text-[#0097B2]" /></span>
                                 <span className="font-medium">Download</span>
                               </button>
@@ -486,7 +558,11 @@ export default function AllDocumentsPage() {
 
       {viewerDoc && (
         <DocumentViewerModal
+          key={`${viewerDoc.id}-${viewerDoc.previewPageCount ?? 0}`}
           doc={viewerDoc}
+          fileDownloadUrl={`${API_BASE_URL}/protected/user/documents/${encodeURIComponent(viewerDoc.id)}/file`}
+          previewImageUrlForPage={previewImageUrlForPage}
+          onNotify={(message, type) => showToast(message, type)}
           onClose={() => setViewerDoc(null)}
           onOpenVersionHistory={() => { setViewerDoc(null); openModal('version', viewerDoc); }}
         />

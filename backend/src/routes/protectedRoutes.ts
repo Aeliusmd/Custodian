@@ -58,6 +58,7 @@ protectedRoutes.get(
 protectedRoutes.get("/org-admin/documents/:id", requireAuth, requireRole("ORG_ADMIN"), protectedController.getOrgAdminDocument);
 protectedRoutes.patch("/org-admin/documents/:id/archive", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminDocumentArchiveStatus);
 protectedRoutes.patch("/org-admin/documents/:id/metadata", requireAuth, requireRole("ORG_ADMIN"), protectedController.updateOrgAdminDocumentMetadata);
+protectedRoutes.post("/org-admin/documents/:id/ocr/retry", requireAuth, requireRole("ORG_ADMIN"), protectedController.retryOrgAdminDocumentOcr);
 protectedRoutes.post("/org-admin/documents/bulk-download", requireAuth, requireRole("ORG_ADMIN"), protectedController.bulkDownloadOrgAdminDocuments);
 protectedRoutes.get("/org-admin/documents/:id/versions", requireAuth, requireRole("ORG_ADMIN"), protectedController.listOrgAdminDocumentVersions);
 protectedRoutes.post("/org-admin/documents/:id/versions/:versionId/restore", requireAuth, requireRole("ORG_ADMIN"), protectedController.restoreOrgAdminDocumentVersion);
@@ -82,14 +83,14 @@ protectedRoutes.post(
 );
 protectedRoutes.post("/user/documents/single", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.createOrgAdminSingleDocument);
 protectedRoutes.post("/user/documents/bulk", requireAuth, requireRole("USER", "ORG_ADMIN"), memoryUploadBulk, protectedController.createOrgAdminBulkDocuments);
+protectedRoutes.post("/user/documents/bulk-download", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.bulkDownloadUserDocuments);
 protectedRoutes.get("/user/documents", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.listUserDocuments);
 protectedRoutes.get("/user/documents/:id", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.getUserDocument);
-protectedRoutes.get(
-  "/user/documents/:id/file",
-  requireAuth,
-  requireRole("USER", "ORG_ADMIN"),
-  protectedController.getUserDocumentFile,
-);
+protectedRoutes.get("/user/documents/:id/file", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.getUserDocumentFile);
+protectedRoutes.get("/user/documents/:id/preview/:pageNum", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.getUserDocumentPreview);
+protectedRoutes.get("/user/documents/:id/versions", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.listUserDocumentVersions);
+protectedRoutes.post("/user/documents/:id/versions/:versionId/restore", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.restoreUserDocumentVersion);
+protectedRoutes.post("/user/documents/:id/share", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.shareUserDocument);
 protectedRoutes.patch("/user/documents/:id/archive", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.updateUserDocumentArchiveStatus);
 protectedRoutes.patch("/user/documents/:id/metadata", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.updateUserDocumentMetadata);
 protectedRoutes.delete("/user/documents/:id", requireAuth, requireRole("USER", "ORG_ADMIN"), protectedController.deleteUserDocument);

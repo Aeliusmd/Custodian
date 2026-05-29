@@ -313,11 +313,12 @@ export const settingsModel = {
         KEY idx_al_created_at (created_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     );
+    const mysqlDatetime = entry.date_time.replace("T", " ").replace("Z", "").slice(0, 19);
     await dbPool.query(
       `INSERT INTO \`${tenantDb}\`.activity_logs
          (id, user_id, date_time, action, module, description)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [entry.id, userId, entry.date_time, entry.action, entry.module, entry.description],
+      [entry.id, userId, mysqlDatetime, entry.action, entry.module, entry.description],
     );
   },
 
