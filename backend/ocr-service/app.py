@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -49,7 +50,30 @@ MAX_CONCURRENT_OCR = 10
 
 QPDF_ARGS = ["qpdf", "--linearize"]
 
-app = FastAPI(title="Custodian OCR service", version="3.0.0")
+# Optional override for Windows / custom installs (e.g. C:\Program Files\LibreOffice\program\soffice.exe)
+LIBREOFFICE_PATH = os.environ.get("LIBREOFFICE_PATH", "").strip()
+
+OFFICE_EXT = {
+    ".doc",
+    ".docx",
+    ".dot",
+    ".dotx",
+    ".xls",
+    ".xlsx",
+    ".xlsm",
+    ".xlsb",
+    ".ppt",
+    ".pptx",
+    ".potx",
+    ".odt",
+    ".ods",
+    ".odp",
+    ".rtf",
+}
+
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
+
+app = FastAPI(title="Custodian OCR service", version="3.1.0")
 
 # Thread pool sized exactly to our concurrency limit.
 # ocrmypdf releases the GIL for its heavy Tesseract/Ghostscript work,
@@ -114,6 +138,80 @@ def save_upload_to_temp(data: bytes, original_name: str, parent: Path) -> Path:
     path = Path(tmp)
     path.write_bytes(data)
     return path
+
+
+def resolve_soffice_executable() -> str | None:
+    if LIBREOFFICE_PATH and Path(LIBREOFFICE_PATH).is_file():
+        return LIBREOFFICE_PATH
+    return shutil.which("soffice") or shutil.which("libreoffice")
+
+
+def convert_office_to_pdf(input_path: Path, out_dir: Path) -> Path:
+    soffice = resolve_soffice_executable()
+    if not soffice:
+        raise HTTPException(
+            status_code=503,
+            detail="LibreOffice (soffice) is not installed or not on PATH. Set LIBREOFFICE_PATH.",
+        )
+    try:
+        subprocess.run(
+            [
+                soffice,
+                "--headless",
+                "--norestore",
+                "--nolockcheck",
+                "--nodefault",
+                "--nofirststartwizard",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                str(out_dir),
+                str(input_path),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise HTTPException(status_code=504, detail="LibreOffice conversion timed out") from e
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or b"").decode("utf-8", errors="replace")[:500]
+        raise HTTPException(status_code=422, detail=f"LibreOffice conversion failed: {stderr}") from e
+
+    expected = out_dir / f"{input_path.stem}.pdf"
+    if expected.is_file():
+        return expected
+    pdfs = sorted(out_dir.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if pdfs:
+        return pdfs[0]
+    raise HTTPException(status_code=422, detail="LibreOffice did not produce a PDF output")
+
+
+def convert_upload_to_pdf_bytes(raw: bytes, filename: str) -> bytes:
+    """Return PDF bytes for PDF, image, or Office uploads."""
+    if bytes_look_like_pdf(raw):
+        return raw
+
+    suffix = Path(filename or "upload").suffix.lower()
+    if not suffix:
+        suffix = ".bin"
+
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        in_path = save_upload_to_temp(raw, filename, td_path)
+
+        if suffix in IMAGE_EXT or suffix == ".pdf":
+            pdf_path = ensure_input_pdf(in_path)
+            return pdf_path.read_bytes()
+
+        if suffix in OFFICE_EXT:
+            pdf_path = convert_office_to_pdf(in_path, td_path)
+            return pdf_path.read_bytes()
+
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type for PDF conversion: {suffix or '(none)'}",
+        )
 
 
 def ensure_input_pdf(input_path: Path) -> Path:
@@ -201,6 +299,7 @@ def health() -> dict[str, str]:
         "workers_total": str(MAX_CONCURRENT_OCR),
         "workers_busy": str(active),
         "workers_free": str(_ocr_semaphore._value),  # type: ignore[attr-defined]
+        "libreoffice": "available" if resolve_soffice_executable() else "missing",
     }
 
 
@@ -219,6 +318,22 @@ async def ocr_endpoint(file: UploadFile = File(...)) -> OcrResponse:
         text, pages = await loop.run_in_executor(_executor, _run_ocr_sync, raw, filename)
 
     return OcrResponse(text=text, markdown=text, pages=pages)
+
+
+@app.post("/convert-to-pdf")
+async def convert_to_pdf_endpoint(file: UploadFile = File(...)) -> Response:
+    """
+    Convert an uploaded document to PDF for unified in-browser preview.
+    PDF passthrough; images via img2pdf; Office via LibreOffice headless.
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    filename = file.filename or "upload"
+
+    loop = asyncio.get_running_loop()
+    pdf_bytes = await loop.run_in_executor(_executor, convert_upload_to_pdf_bytes, raw, filename)
+    return Response(content=pdf_bytes, media_type="application/pdf")
 
 
 @app.post("/render-page")
